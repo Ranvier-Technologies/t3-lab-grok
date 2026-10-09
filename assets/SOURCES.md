@@ -1,0 +1,3 @@
+assets/t3-code.png is the unmodified 180px apple-touch icon from apps/web/public/apple-touch-icon.png in the official T3 Code tag v0.0.46-nightly.20261003.2632, commit f391794a35c604d57e166a3ab48d56fc6e4e469a. Included for the plugin logo. The accompanying T3-LICENSE.txt preserves the MIT attribution to T3 Tools Inc.
+
+The provider icons in ui/delegation-card.html (Codex, Claude, Cursor, Grok, OpenCode, Antigravity) are copied from T3 Code apps/web/src/components/Icons.tsx at origin/main, using the dark-theme fills, with the Antigravity PNG downscaled to 32px. T3 Code is MIT licensed by T3 Tools Inc. (see T3-LICENSE.txt). The marks belong to their respective owners.

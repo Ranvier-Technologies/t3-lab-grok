@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "t3-lab-grok": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--frozen",
+        "python",
+        "server.py"
+      ],
+      "cwd": "${CURSOR_PLUGIN_ROOT}",
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "T3_LAB_OWNER": "${T3_LAB_OWNER}"
+      }
+    }
+  }
+}

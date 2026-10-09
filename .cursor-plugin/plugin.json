@@ -1,0 +1,43 @@
+{
+  "name": "t3-lab-grok",
+  "version": "0.3.8",
+  "description": "Delegate from a parent chat (Cursor Agent, Grok Bot, Codex) to official T3 Nightly environments with durable operations, verified checkouts and text-first status.",
+  "author": {
+    "name": "Bastian"
+  },
+  "homepage": "https://github.com/Ranvier-Technologies/t3-lab-grok",
+  "repository": "https://github.com/Ranvier-Technologies/t3-lab-grok",
+  "license": "MIT",
+  "keywords": [
+    "t3",
+    "delegation",
+    "mcp",
+    "cursor"
+  ],
+  "logo": "assets/t3-code.png",
+  "skills": "./skills/",
+  "variables": {
+    "type": "object",
+    "properties": {
+      "T3_LAB_OWNER": {
+        "type": "string",
+        "title": "T3 lab owner",
+        "description": "Optional UUID journal partition for this install. Generate your own (python3 -c \"import uuid; print(uuid.uuid4())\") and set it in Plugins → Configure, or leave it empty to use the private owner file written by `uv run --frozen python setup.py init`. mcp.json only references ${T3_LAB_OWNER}; never commit a real owner UUID."
+      }
+    }
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "T3 Lab Grok",
+        "shortDescription": "T3 threads from parent chat",
+        "longDescription": "Keep your parent chat (Cursor Agent, Grok Bot, or Codex) as the main conversation. Launch work through the official T3 client APIs, recover the same operation after a cut, and open its exact T3 thread to intervene. No automatic idle-chat wake. Codex may supply _meta.threadId; other hosts use T3_LAB_OWNER. Prepared for community use; not yet listed on the Cursor Marketplace.",
+        "developerName": "Bastian",
+        "category": "Productivity",
+        "defaultPrompt": "Ask Claude and Grok for a second opinion on a file, in parallel.",
+        "logo": "./assets/t3-code.png",
+        "composerIcon": "./assets/t3-code.png"
+      }
+    }
+  }
+}

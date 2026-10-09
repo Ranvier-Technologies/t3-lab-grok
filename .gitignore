@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+.python-version
+._*
+.DS_Store
+t3-lab-grok-prove-*.md

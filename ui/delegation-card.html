@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delegation</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --background: #000;
+    --muted: #0a0a0a;
+    --accent: #191a1d;
+    --border: rgb(255 255 255 / 8%);
+    --input: rgb(255 255 255 / 18%);
+    --faint: #6e6e6e;
+    --muted-foreground: #a3a3a3;
+    --foreground: #f1f3f7;
+    --radius: 10px;
+    --control-radius: 8px;
+    --sans: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif);
+    --mono: var(--font-mono, ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--background); color: var(--foreground); }
+  body { padding: 8px; font: 13px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  .card { background: var(--muted); border: 1px solid var(--border); border-radius: calc(var(--radius) + 2px); padding: 14px; }
+
+  header { display: flex; align-items: center; gap: 8px; height: 22px; }
+  .logo { flex: none; width: 18px; height: 18px; border-radius: 5px; }
+  .brand { font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
+  .phase {
+    font-size: 11px; line-height: 18px; padding: 0 7px; color: var(--muted-foreground);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  .pill {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    height: 22px; padding: 0 9px 0 8px; border-radius: 999px; border: 1px solid var(--border);
+    font-size: 11.5px; font-weight: 500; white-space: nowrap; color: var(--muted-foreground);
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .pill[data-status="queued"] .dot { background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
+  .pill[data-status="running"] { color: var(--foreground); border-color: var(--input); }
+  .pill[data-status="running"] .dot { animation: status-pulse 2s infinite; }
+  .pill[data-status="waiting"] { color: var(--foreground); border-color: var(--input); }
+  .pill[data-status="waiting"] .dot { background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
+  .pill[data-status="done"] { color: var(--foreground); background: var(--accent); }
+  .pill[data-status="stopped"] .dot { border-radius: 1px; }
+  .pill[data-status="error"] { color: var(--background); background: var(--foreground); border-color: var(--foreground); }
+  @keyframes status-pulse {
+    0%, 40% { opacity: 1; animation-timing-function: steps(6); }
+    50%, 90% { opacity: 0.5; animation-timing-function: steps(6); }
+    100% { opacity: 1; }
+  }
+
+  h1 {
+    margin: 12px 0 0; font-size: 15px; line-height: 1.35; font-weight: 600; letter-spacing: -0.01em;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+  }
+
+  .meta { margin-top: 8px; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .tile {
+    flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+    background: var(--accent); border: 1px solid var(--border); border-radius: 6px;
+  }
+  .tile svg { width: 14px; height: 14px; display: block; }
+  #agent-name { flex: none; font-size: 13px; font-weight: 500; }
+  #agent-model {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--mono); font-size: 12px; color: var(--muted-foreground);
+  }
+  #thread { margin-left: auto; flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+  #elapsed { font-weight: 400; opacity: 0.7; }
+  #elapsed::before { content: "· "; }
+
+  .summary { margin-top: 10px; }
+  #summary { margin: 0; color: var(--muted-foreground); white-space: pre-line; overflow-wrap: anywhere; }
+  #summary.clamped { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  #summary .command { font-family: var(--mono); font-size: 12px; color: var(--foreground); }
+  .more { margin-top: 2px; padding: 0; border: 0; background: none; cursor: pointer; font: inherit; font-size: 12px; color: var(--faint); }
+  .more:hover { color: var(--foreground); }
+
+  .url {
+    margin-top: 12px; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px;
+    background: var(--background); border: 1px solid var(--border); border-radius: var(--control-radius);
+  }
+  #url-label { flex: none; font-size: 11px; font-weight: 500; color: var(--faint); }
+  #url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; color: var(--muted-foreground); user-select: all; }
+
+  #hint { margin: 6px 0 0; font-size: 12px; line-height: 1.4; color: var(--faint); }
+
+  .actions { margin-top: 12px; display: flex; gap: 8px; }
+  .btn {
+    appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 32px; padding: 0 14px; border-radius: var(--control-radius); cursor: pointer;
+    font: inherit; font-weight: 500; transition: background-color 120ms ease;
+  }
+  .btn:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
+  .primary { flex: 1; background: var(--foreground); color: var(--background); border: 1px solid var(--foreground); }
+  .primary:hover { background: #d4d6db; }
+  .secondary { background: none; color: var(--foreground); border: 1px solid var(--input); }
+  .secondary:hover { background: var(--accent); }
+  .btn svg { width: 14px; height: 14px; }
+
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    .pill .dot { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<article class="card">
+  <header>
+    <img class="logo" alt="T3 Code" width="18" height="18" src="data:image/png;base64,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">
+    <span class="brand">T3</span>
+    <span class="phase" id="phase">Handoff</span>
+    <span class="pill" id="pill" data-status="queued" role="status"><i class="dot"></i><span id="status-label">Queued</span><span id="elapsed" hidden></span></span>
+  </header>
+
+  <h1 id="title">Task</h1>
+
+  <div class="meta" id="meta" hidden>
+    <span class="who" id="who" hidden>
+      <span class="tile" id="agent-icon" aria-hidden="true"></span>
+      <span id="agent-name"></span>
+      <span id="agent-model"></span>
+    </span>
+    <span id="thread" hidden></span>
+  </div>
+
+  <div class="summary">
+    <p id="summary" class="clamped">Waiting for the task.</p>
+    <button type="button" class="more" id="more" hidden>Show more</button>
+  </div>
+
+  <div class="url" id="url-row" hidden>
+    <span id="url-label"></span>
+    <code id="url"></code>
+  </div>
+
+  <p id="hint" hidden></p>
+
+  <div class="actions" id="actions" hidden>
+    <button type="button" class="btn primary" id="open" hidden>
+      <span id="open-label">Open</span>
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3h7v7M13 3 4 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button type="button" class="btn secondary" id="copy" hidden>Copy</button>
+  </div>
+</article>
+<script>
+(function () {
+  var PHASE = { handoff: "Handoff", update: "Update", "wrap-up": "Wrap-up" };
+  // Deprecated Spanish phase values from servers before 0.3.7.
+  var PHASE_ALIAS = { encargo: "handoff", aviso: "update", cierre: "wrap-up" };
+  var STATUS = { queued: "Queued", running: "Working", waiting: "Waiting", done: "Done", stopped: "Stopped", error: "Error" };
+  var ROW = {
+    starting: "queued", unknown: "queued", running: "running", background: "running",
+    waiting_for_input: "waiting", waiting_for_approval: "waiting",
+    completed: "done", stopped: "stopped", failed: "error"
+  };
+  var IDLE = {
+    queued: "Queued in T3.",
+    running: "Working in T3. This card updates itself.",
+    waiting: "T3 is waiting for you. Open the thread to answer.",
+    done: "Finished. Open the thread to read the reply.",
+    stopped: "Stopped before finishing. Open the thread to see where it ended.",
+    error: "Failed. Open the thread to see the error."
+  };
+  // What a pending request asks, keyed by its kind; the provider brand leads.
+  var ASKS = {
+    command: "wants to run",
+    "file-change": "wants to change files",
+    "file-read": "wants to read files",
+    permission: "asks for permission",
+    "mcp-elicitation": "has a request",
+    dynamic_tool_call: "wants to use a tool",
+    user_input: "has a question",
+    auth_refresh: "needs you to sign in again"
+  };
+  var WAITING_LINE = /^Needs your attention: waiting for your (approval|reply)$/;
+  var REJECTED = "The host refused to open the link. Copy it and paste it into Safari or T3.";
+  // One row per scenario, keyed "<best link>/<host mode>". Each slot names the
+  // link it shows; "app|web" is the app link when present, else the web one.
+  var LINKS = {
+    "web/open": { open: "web", label: "Open", copy: "app|web", row: "", hint: "" },
+    "app/open": { open: "app", label: "Open app", copy: "app", row: "app", hint: "If Open doesn't launch T3, use Copy and paste the link into Safari or the app." },
+    "web/closed": { open: "", copy: "web", row: "web", hint: "" },
+    "app/closed": { open: "", copy: "app", row: "app", hint: "This host can't open links. Copy the t3code link below." },
+    "web/rejected": { open: "", copy: "app|web", row: "app|web", hint: REJECTED },
+    "app/rejected": { open: "", copy: "app", row: "app", hint: REJECTED },
+    none: { open: "", copy: "", row: "", hint: "" }
+  };
+  // Generated by /tmp/t3card/icons.mjs from T3 Code apps/web/src/components/Icons.tsx (origin/main).
+  var PROVIDERS = {
+    codex: { label: "Codex", svg: "<svg viewBox=\"100 100 411 411\" fill=\"#f1f3f7\" fill-rule=\"evenodd\" clip-rule=\"evenodd\"><path d=\"M252.794 108.802C289.191 99.0484 326.265 110.305 351.148 135.135C385.113 126.072 422.85 134.862 449.492 161.505C476.136 188.149 484.925 225.888 475.862 259.85V259.854C500.696 284.735 511.95 321.81 502.198 358.207C492.447 394.602 464.161 421.084 430.215 430.217C421.083 464.162 394.603 492.448 358.206 502.199C321.812 511.951 284.734 500.693 259.852 475.864C225.887 484.927 188.15 476.137 161.507 449.495C134.864 422.851 126.073 385.111 135.136 351.149C110.304 326.266 99.0496 289.192 108.801 252.795C118.552 216.4 146.84 189.918 180.784 180.785C189.917 146.841 216.396 118.553 252.794 108.802ZM374.292 407.145C374.292 411.271 372.092 415.086 368.517 417.148L283.723 466.102C302.487 480.585 327.555 486.459 352.217 479.852C386.997 470.532 410.068 439.312 410.555 405.006V317.717C410.555 315.08 409.125 312.621 406.843 311.303L374.292 292.509V407.145ZM251.868 415.897C248.296 417.959 243.893 417.959 240.317 415.897L155.526 366.942C152.366 390.436 159.811 415.08 177.866 433.136H177.863C203.325 458.594 241.896 462.962 271.85 446.232L347.449 402.586C349.735 401.268 351.148 398.8 351.148 396.163V358.579L251.868 415.897ZM368.602 220.628C366.319 219.309 363.474 219.318 361.191 220.637L328.641 239.431L427.921 296.749C431.496 298.811 433.697 302.627 433.697 306.752V404.661C455.622 395.654 473.244 376.881 479.851 352.218C489.169 317.442 473.668 281.85 444.201 264.274L368.602 220.628ZM177.303 206.34C155.377 215.348 137.756 234.122 131.148 258.783C121.832 293.561 137.331 329.153 166.799 346.727L242.398 390.373C244.68 391.692 247.525 391.684 249.807 390.366L282.357 371.572L183.078 314.253C179.504 312.189 177.303 308.375 177.303 304.251V206.34ZM259.849 279.145V331.858L305.5 358.213L351.15 331.858V279.145L305.5 252.789L259.849 279.145ZM327.276 144.9C308.512 130.418 283.445 124.543 258.782 131.15C224.002 140.471 200.931 171.691 200.445 205.995V293.286C200.445 295.923 201.875 298.381 204.158 299.7L236.707 318.493V203.856C236.707 199.731 238.909 195.916 242.483 193.853L327.276 144.9ZM433.137 177.867C407.675 152.407 369.103 148.038 339.149 164.769L263.55 208.415C261.265 209.734 259.852 212.202 259.852 214.838V252.423L359.132 195.105C362.703 193.041 367.108 193.041 370.682 195.105L455.473 244.06C458.635 220.567 451.189 195.922 433.135 177.867H433.137Z\"/></svg>" },
+    claudeAgent: { label: "Claude", svg: "<svg viewBox=\"0 0 256 257\" fill=\"#d97757\"><path d=\"m50.228 170.321 50.357-28.257.843-2.463-.843-1.361h-2.462l-8.426-.518-28.775-.778-24.952-1.037-24.175-1.296-6.092-1.297L0 125.796l.583-3.759 5.12-3.434 7.324.648 16.202 1.101 24.304 1.685 17.629 1.037 26.118 2.722h4.148l.583-1.685-1.426-1.037-1.101-1.037-25.147-17.045-27.22-18.017-14.258-10.37-7.713-5.25-3.888-4.925-1.685-10.758 7-7.713 9.397.649 2.398.648 9.527 7.323 20.35 15.75L94.817 91.9l3.889 3.24 1.555-1.102.195-.777-1.75-2.917-14.453-26.118-15.425-26.572-6.87-11.018-1.814-6.61c-.648-2.723-1.102-4.991-1.102-7.778l7.972-10.823L71.42 0 82.05 1.426l4.472 3.888 6.61 15.101 10.694 23.786 16.591 32.34 4.861 9.592 2.592 8.879.973 2.722h1.685v-1.556l1.36-18.211 2.528-22.36 2.463-28.776.843-8.1 4.018-9.722 7.971-5.25 6.222 2.981 5.12 7.324-.713 4.73-3.046 19.768-5.962 30.98-3.889 20.739h2.268l2.593-2.593 10.499-13.934 17.628-22.036 7.778-8.749 9.073-9.657 5.833-4.601h11.018l8.1 12.055-3.628 12.443-11.342 14.388-9.398 12.184-13.48 18.147-8.426 14.518.778 1.166 2.01-.194 30.46-6.481 16.462-2.982 19.637-3.37 8.88 4.148.971 4.213-3.5 8.62-20.998 5.184-24.628 4.926-36.682 8.685-.454.324.519.648 16.526 1.555 7.065.389h17.304l32.21 2.398 8.426 5.574 5.055 6.805-.843 5.184-12.962 6.611-17.498-4.148-40.83-9.721-14-3.5h-1.944v1.167l11.666 11.406 21.387 19.314 26.767 24.887 1.36 6.157-3.434 4.86-3.63-.518-23.526-17.693-9.073-7.972-20.545-17.304h-1.36v1.814l4.73 6.935 25.017 37.59 1.296 11.536-1.814 3.76-6.481 2.268-7.13-1.297-14.647-20.544-15.1-23.138-12.185-20.739-1.49.843-7.194 77.448-3.37 3.953-7.778 2.981-6.48-4.925-3.436-7.972 3.435-15.749 4.148-20.544 3.37-16.333 3.046-20.285 1.815-6.74-.13-.454-1.49.194-15.295 20.999-23.267 31.433-18.406 19.702-4.407 1.75-7.648-3.954.713-7.064 4.277-6.286 25.47-32.405 15.36-20.092 9.917-11.6-.065-1.686h-.583L44.07 198.125l-12.055 1.555-5.185-4.86.648-7.972 2.463-2.593 20.35-13.999-.064.065Z\"/></svg>" },
+    cursor: { label: "Cursor", svg: "<svg viewBox=\"0 0 466.73 532.09\" fill=\"#EDECEC\"><path d=\"M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z\"/></svg>" },
+    grok: { label: "Grok", svg: "<svg viewBox=\"0 0 24 24\" fill=\"#F5F5F5\"><path d=\"M9.26905 15.284L17.2479 9.36086C17.6391 9.07047 18.1981 9.18374 18.3845 9.63478C19.3655 12.0135 18.9272 14.8721 16.9755 16.8349C15.0238 18.7976 12.3082 19.228 9.8261 18.2477L7.1146 19.5102C11.0037 22.1834 15.7263 21.5223 18.6774 18.5525C21.0182 16.1985 21.7432 12.9897 21.0653 10.0961L21.0714 10.1023C20.0884 5.85143 21.3131 4.15233 23.8218 0.677913C23.8812 0.595532 23.9406 0.513151 24 0.428711L20.6987 3.74866V3.73836L9.267 15.2861\"/><path d=\"M7.62249 16.7237C4.83113 14.0422 5.3124 9.89222 7.69417 7.49905C9.45541 5.72786 12.341 5.00497 14.86 6.06768L17.5653 4.81138C17.0779 4.45714 16.4533 4.07613 15.7365 3.80839C12.4966 2.46764 8.6178 3.13492 5.98413 5.78141C3.45081 8.32904 2.65415 12.2463 4.02219 15.5889C5.04412 18.0871 3.36889 19.8541 1.68137 21.6377C1.08337 22.2699 0.483318 22.9022 0 23.5716L7.62045 16.7257\"/></svg>" },
+    opencode: { label: "OpenCode", svg: "<svg viewBox=\"0 0 32 40\" fill=\"none\"><path d=\"M24 8H8V32H24V8ZM32 40H0V0H32V40Z\" fill=\"#F1ECEC\"/><path d=\"M24 32H8V16H24V32Z\" fill=\"#4B4646\"/></svg>" },
+    antigravity: { label: "Antigravity", svg: "<svg viewBox=\"0 0 128 128\"><image href=\"data:image/png;base64,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\" width=\"128\" height=\"128\"/></svg>" }
+  };
+  var GENERIC = '<svg viewBox="0 0 16 16" fill="none" stroke="#a3a3a3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 11.5h4"/></svg>';
+  var URLS = /(?:https?|t3code):\/\/[^\s)`]+/g;
+  // One left-to-right pass so an escaped "\*" or "\_" is never read as Markdown syntax.
+  var INLINE = new RegExp(/\\([\\`*_\[\]<>#|~])|(`+)([\s\S]*?)\2(?!`)|\[([^\]]*)\]\((?:[^)]*\)|[^)]*$)|\*\*|`+|/.source + URLS.source, "g");
+
+  var card = { phase: "handoff", status: "queued", title: "Task" };
+  var notice = "Waiting for the task.";
+  var openLinks = false;
+  var rejected = false;
+  var expanded = false;
+  var summaryLines = [];
+  var ready = false;
+  var stopped = false;
+  var timer = null;
+  var ticker = null;
+  // Server long-poll: delegation_status holds up to WAIT_SECONDS until the row's
+  // signature changes, so Done/Waiting show within ~2 s. Kept well under host
+  // per-call timeouts. If the wait call fails or is unsupported, fall back to
+  // adaptive polling: 3 s for the first minute, then 10 s, then 30 s.
+  var WAIT_SECONDS = 25;
+  var MAX_ERRORS = 5;
+  var longPoll = true;
+  var errors = 0;
+  var watchStart = Date.now();
+  var rpc = 1;
+  var pending = {};
+
+  function $(id) { return document.getElementById(id); }
+
+  function post(message) {
+    window.parent.postMessage(message, "*");
+  }
+
+  function request(method, params) {
+    var id = rpc++;
+    return new Promise(function (resolve, reject) {
+      pending[id] = { resolve: resolve, reject: reject };
+      post({ jsonrpc: "2.0", id: id, method: method, params: params });
+    });
+  }
+
+  function notify(method, params) {
+    post({ jsonrpc: "2.0", method: method, params: params || {} });
+  }
+
+  function httpOnly(value) {
+    try {
+      var url = new URL(value);
+      if (url.protocol === "https:" || url.protocol === "http:") return url.href;
+    } catch (error) {}
+    return "";
+  }
+
+  function appScheme(value) {
+    try {
+      var url = new URL(value);
+      if (url.protocol === "t3code:") return url.href;
+    } catch (error) {}
+    return "";
+  }
+
+  function terminal(status) {
+    return status === "done" || status === "stopped" || status === "error";
+  }
+
+  function brand(key) {
+    return Object.prototype.hasOwnProperty.call(PROVIDERS, key) ? PROVIDERS[key] : null;
+  }
+
+  function textOf(result) {
+    var blocks = (result && result.content) || [];
+    return blocks.map(function (block) { return block && block.text ? block.text : ""; }).join("\n");
+  }
+
+  // Host plus path segments with long ids cut to 8 chars: "threads/7d2a1c4e…/82c111bc…".
+  function shortUrl(value) {
+    var url;
+    try { url = new URL(value); } catch (error) {
+      return value.length > 40 ? value.slice(0, 32) + "…" : value;
+    }
+    var host = url.hostname.length > 24 ? url.hostname.split(".")[0] + "…" : url.hostname;
+    var path = url.pathname.split("/").filter(Boolean).map(function (part) {
+      return part.length > 12 ? part.slice(0, 8) + "…" : part;
+    });
+    return [host + (url.port ? ":" + url.port : "")].concat(path).join("/");
+  }
+
+  function plainLine(line) {
+    return String(line).replace(INLINE, function (match, escaped, fence, code, label) {
+      if (escaped) return escaped;
+      if (fence) return code.replace(URLS, "").replace(/`+/g, "");
+      if (label !== undefined) return label;
+      return "";
+    }).replace(/\s+/g, " ").trim();
+  }
+
+  // Parses domain.digest(). The header already shows title, status, phase and
+  // links, so the summary keeps only attention, error, notice and reply lines;
+  // the indented row line yields the provider instance and model.
+  function summarize(text, id8) {
+    var out = { instance: "", model: "", body: [] };
+    var inRow = false;
+    String(text || "").split("\n").forEach(function (raw) {
+      var line = plainLine(raw);
+      if (!line || /^Card:/.test(line) || /^\*\*(Handoff|Update|Check-in|Wrap-up)\*\* · /.test(raw)) return;
+      if (/^ {2,}\S/.test(raw)) {
+        var parts = raw.trim().split(" · ");
+        if (!out.instance || parts[2] === id8) {
+          out.instance = plainLine(parts[0]);
+          out.model = plainLine(parts[1] || "");
+        }
+        inRow = false;
+      } else if (/^#\d+ · /.test(line)) {
+        inRow = true;
+      } else if (inRow && raw.indexOf("`") < 0) {
+        inRow = false;
+      } else {
+        out.body.push(/^Needs your attention:/.test(line) ? line.replace(/#\d+ /g, "") : line);
+      }
+    });
+    return out;
+  }
+
+  // Older servers send no driver or model: fall back to the digest, and trust
+  // the instance id as a driver only when it is exactly a known driver slug.
+  function agentOf(parsed) {
+    var instance = card.provider || parsed.instance;
+    var driver = card.driver || (brand(instance) ? instance : "");
+    var known = brand(driver);
+    if (!known && !instance && !driver) return null;
+    return {
+      icon: known ? driver : "",
+      name: known ? known.label : instance || driver,
+      model: card.model || parsed.model,
+      tooltip: instance && instance !== driver ? instance : ""
+    };
+  }
+
+  function askLines(ask, agent) {
+    var lines = [(agent && agent.icon ? agent.name : "T3") + " " + (Object.prototype.hasOwnProperty.call(ASKS, ask.kind) ? ASKS[ask.kind] : "is waiting for you")];
+    if (ask.text) lines.push(ask.kind === "command" ? { command: String(ask.text) } : String(ask.text));
+    return lines;
+  }
+
+  function links() {
+    var urls = { web: httpOnly(card.httpsUrl) || httpOnly(card.webUrl), app: appScheme(card.appUrl) };
+    var mode = rejected ? "rejected" : openLinks ? "open" : "closed";
+    // App link first: the web page only works in a browser already paired with T3.
+    var rule = LINKS[urls.app ? "app/" + mode : urls.web ? "web/" + mode : "none"];
+    var pick = function (slot) {
+      return slot.split("|").map(function (key) { return urls[key]; }).filter(Boolean)[0] || "";
+    };
+    return { open: pick(rule.open), openLabel: rule.label || "", copy: pick(rule.copy), row: pick(rule.row), hint: rule.hint };
+  }
+
+  function kindOf(url) {
+    return url.indexOf("t3code:") === 0 ? "App" : "Web";
+  }
+
+  function reportSize() {
+    requestAnimationFrame(function () {
+      notify("ui/notifications/size-changed", {
+        width: document.documentElement.scrollWidth,
+        // body, not scrollHeight, so the frame can also shrink
+        height: Math.ceil(document.body.getBoundingClientRect().height)
+      });
+    });
+  }
+
+  // Recomputed on every paint and by a 1 s local ticker while the task runs.
+  function elapsed(status) {
+    var start = Date.parse(card.startedAt);
+    var end = terminal(status) ? Date.parse(card.completedAt) : Date.now();
+    if (isNaN(start) || isNaN(end)) return "";
+    var seconds = Math.max(0, Math.floor((end - start) / 1000));
+    var minutes = Math.floor(seconds / 60);
+    if (seconds < 60) return seconds + " s";
+    if (minutes < 60) return minutes + " min";
+    return Math.floor(minutes / 60) + " h " + String(minutes % 60).padStart(2, "0") + " min";
+  }
+
+  // Lines are strings, or { command } for a command shown in mono. Text only, never markup.
+  function setSummary(lines) {
+    if (lines) summaryLines = lines;
+    var summary = $("summary");
+    summary.replaceChildren();
+    summaryLines.forEach(function (line, index) {
+      if (index) summary.append("\n");
+      if (typeof line === "string") return summary.append(line);
+      var command = document.createElement("span");
+      command.className = "command";
+      command.textContent = line.command;
+      summary.append(command);
+    });
+    summary.className = "clamped";
+    var overflows = summary.scrollHeight > summary.clientHeight + 1;
+    summary.className = expanded ? "" : "clamped";
+    $("more").hidden = !overflows;
+    $("more").textContent = expanded ? "Show less" : "Show more";
+  }
+
+  function setIcon(key) {
+    var tile = $("agent-icon");
+    if (tile.dataset.key === key) return;
+    var template = document.createElement("template");
+    template.innerHTML = key ? PROVIDERS[key].svg : GENERIC;
+    tile.dataset.key = key;
+    tile.replaceChildren(template.content);
+  }
+
+  function showUrl(url) {
+    $("url-row").hidden = !url;
+    $("url-label").textContent = url ? kindOf(url) : "";
+    $("url").textContent = url ? shortUrl(url) : "";
+    $("url").title = url;
+  }
+
+  function render() {
+    var status = STATUS[card.status] ? card.status : "queued";
+    var id8 = card.threadId ? String(card.threadId).slice(0, 8) : "";
+    var parsed = summarize(card.digest, id8);
+    var agent = agentOf(parsed);
+    var link = links();
+
+    $("phase").textContent = PHASE[PHASE_ALIAS[card.phase] || card.phase] || PHASE.handoff;
+    $("pill").dataset.status = status;
+    $("status-label").textContent = STATUS[status];
+    $("title").textContent = card.title || "Task";
+    $("title").title = card.title || "";
+
+    $("meta").hidden = !agent && !id8;
+    $("who").hidden = !agent;
+    if (agent) {
+      setIcon(agent.icon);
+      $("agent-name").textContent = agent.name;
+      $("agent-name").title = agent.tooltip;
+      $("agent-model").textContent = agent.model;
+      $("agent-model").title = agent.model;
+    }
+    var took = elapsed(status);
+    $("elapsed").hidden = !took;
+    $("elapsed").textContent = took;
+    $("thread").hidden = !id8;
+    $("thread").textContent = id8 ? "thread · " + id8 : "";
+    $("thread").title = card.threadId || "";
+
+    var lines = notice ? notice.split("\n").map(plainLine).filter(Boolean) : parsed.body;
+    if (!notice && status === "waiting" && card.ask && card.ask.kind) {
+      lines = askLines(card.ask, agent).concat(lines.filter(function (line) { return !WAITING_LINE.test(line); }));
+    }
+    setSummary(lines.length ? lines : [plainLine(card.excerpt || "") || IDLE[status]]);
+
+    showUrl(link.row);
+    $("hint").hidden = !link.hint;
+    $("hint").textContent = link.hint;
+    $("actions").hidden = !link.copy;
+    $("open").hidden = !link.open;
+    $("open").dataset.url = link.open;
+    $("open-label").textContent = link.openLabel;
+    $("copy").hidden = !link.copy;
+    $("copy").dataset.value = link.copy;
+    $("copy").className = "btn " + (link.open ? "secondary" : "primary");
+    reportSize();
+  }
+
+  function stop() {
+    stopped = true;
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (ticker) { clearInterval(ticker); ticker = null; }
+  }
+
+  function tick() {
+    if (ticker || stopped) return;
+    ticker = setInterval(function () {
+      var status = STATUS[card.status] ? card.status : "queued";
+      if (stopped || terminal(status)) { clearInterval(ticker); ticker = null; return; }
+      var took = elapsed(status);
+      $("elapsed").hidden = !took;
+      $("elapsed").textContent = took;
+    }, 1000);
+  }
+
+  function backoff() {
+    var age = Date.now() - watchStart;
+    return age < 60000 ? 3000 : age < 300000 ? 10000 : 30000;
+  }
+
+  function fail(message) {
+    stop();
+    notice = message;
+    render();
+  }
+
+  function fromRow(row, digest, phase) {
+    var environment = encodeURIComponent(row.environment || "");
+    var thread = encodeURIComponent(row.threadId || "");
+    var origin = String(row.webOrigin || "").trim().replace(/\/+$/, "");
+    var model = {
+      phase: phase,
+      threadId: row.threadId,
+      title: row.title || "Task",
+      status: ROW[row.status] || "queued",
+      digest: digest || "",
+      provider: row.provider,
+      driver: row.driver,
+      model: row.model,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+      excerpt: row.excerpt,
+      ask: row.ask,
+      signature: row.signature
+    };
+    if (environment && thread) model.appUrl = "t3code://threads/" + environment + "/" + thread;
+    if (origin.indexOf("https://") === 0 && origin.indexOf("@") < 0) model.httpsUrl = origin + "/" + environment + "/" + thread;
+    else if (origin.indexOf("http://") === 0 && origin.indexOf("@") < 0) model.webUrl = origin + "/" + environment + "/" + thread;
+    return model;
+  }
+
+  function accept(model) {
+    if (!model || !model.threadId) return;
+    card = model;
+    notice = "";
+    if (terminal(card.status)) {
+      card.phase = "wrap-up";
+      stop();
+    }
+    render();
+    if (!terminal(card.status)) tick();
+    if (ready) schedule(longPoll ? 0 : backoff());
+  }
+
+  function schedule(delay) {
+    if (timer || stopped || !card.threadId || terminal(card.status)) return;
+    timer = setTimeout(poll, delay);
+  }
+
+  function poll() {
+    timer = null;
+    if (stopped || !card.threadId || terminal(card.status)) return;
+    var args = { threadIds: [card.threadId], moment: "check-in" };
+    if (longPoll) {
+      args.waitSeconds = WAIT_SECONDS;
+      if (card.signature) args.since = card.signature;
+    }
+    request("tools/call", { name: "delegation_status", arguments: args }).then(function (result) {
+      if (result && result.isError) throw new Error(textOf(result) || "Could not read the thread.");
+      var data = (result && result.structuredContent) || {};
+      var rows = data.rows || [];
+      var row = rows.filter(function (item) { return item.threadId === card.threadId; })[0] || rows[0];
+      if (!row) throw new Error("No data for this thread.");
+      errors = 0;
+      accept(fromRow(row, data.digest || card.digest, terminal(ROW[row.status] || "queued") ? "wrap-up" : "update"));
+    }).catch(function (error) {
+      errors += 1;
+      if (errors >= MAX_ERRORS) {
+        card.phase = "wrap-up";
+        fail((error && error.message) || "Could not update the card.");
+        return;
+      }
+      // An older server rejects waitSeconds; a host may time the call out. Poll instead.
+      longPoll = false;
+      schedule(backoff());
+    });
+  }
+
+  // The palette is fixed by design; the host only contributes fonts.
+  function applyContext(ctx) {
+    var vars = ctx && ctx.styles && ctx.styles.variables;
+    if (!vars) return;
+    ["--font-sans", "--font-mono"].forEach(function (key) {
+      var value = vars[key];
+      if (typeof value === "string" && value.length < 200) document.documentElement.style.setProperty(key, value);
+    });
+  }
+
+  window.addEventListener("message", function (event) {
+    var data = event.data;
+    if (!data || data.jsonrpc !== "2.0") return;
+    if (data.id != null && pending[data.id]) {
+      var wait = pending[data.id];
+      delete pending[data.id];
+      if (data.error) wait.reject(new Error(data.error.message || "The host rejected the request."));
+      else wait.resolve(data.result);
+      return;
+    }
+    if (data.method === "ui/notifications/tool-result") {
+      var params = data.params || {};
+      if (params.isError || !params.structuredContent) {
+        card = { phase: "wrap-up", status: "error", title: "Task without a card" };
+        fail(textOf(params) || "This task has no card.");
+        return;
+      }
+      accept(params.structuredContent);
+    } else if (data.method === "ui/notifications/tool-cancelled") {
+      fail((data.params && data.params.reason) || "Task cancelled.");
+    } else if (data.method === "ui/notifications/host-context-changed") {
+      applyContext(data.params);
+    }
+  });
+
+  $("more").addEventListener("click", function () {
+    expanded = !expanded;
+    setSummary();
+    reportSize();
+  });
+
+  $("open").addEventListener("click", function () {
+    request("ui/open-link", { url: $("open").dataset.url }).catch(function () {
+      rejected = true;
+      render();
+    });
+  });
+
+  $("copy").addEventListener("click", function () {
+    var copy = $("copy");
+    var value = copy.dataset.value;
+    var flash = function (label) {
+      copy.textContent = label;
+      setTimeout(function () { copy.textContent = "Copy"; }, 1600);
+    };
+    var select = function () {
+      showUrl(value);
+      $("url").textContent = value;
+      var range = document.createRange();
+      range.selectNodeContents($("url"));
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      flash("Selected: ⌘C");
+      reportSize();
+    };
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return select();
+    navigator.clipboard.writeText(value).then(function () { flash("Copied"); }, select);
+  });
+
+  request("ui/initialize", {
+    protocolVersion: "2026-01-26",
+    appCapabilities: { availableDisplayModes: ["inline"] }
+  }).then(function (result) {
+    openLinks = !!(result && result.hostCapabilities && result.hostCapabilities.openLinks);
+    applyContext(result && result.hostContext);
+    ready = true;
+    notify("ui/notifications/initialized");
+    render();
+    schedule(longPoll ? 0 : backoff());
+  }).catch(function () {
+    ready = true;
+    if (!card.threadId) {
+      notice = "The host didn't start the card.";
+      render();
+    }
+  });
+})();
+</script>
+</body>
+</html>
