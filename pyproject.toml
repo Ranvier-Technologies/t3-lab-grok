@@ -1,6 +1,6 @@
 [project]
 name = "t3-lab-grok"
-version = "0.3.8"
+version = "0.3.9"
 requires-python = ">=3.12"
 dependencies = [
     "certifi==2026.7.22",

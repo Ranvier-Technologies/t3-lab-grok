@@ -112,12 +112,11 @@ class Apps(unittest.IsolatedAsyncioTestCase):
         result = await self.call("show_delegation", {"threadId": launch["threadId"], "phase": "handoff", "owner": OWNER})
         self.assertFalse(result.isError)
         text = result.content[0].text
-        self.assertTrue(text.startswith("Card: expand the show_delegation result"))
+        self.assertNotIn("Card: expand", text)
         self.assertIn("**Handoff**", text)
-        self.assertIn("[open in T3 ↗](t3code://threads/", text)
-        self.assertIn("` t3code://threads/", text)
-        self.assertIn("[web (needs paired browser) ↗](https://nightly.example/", text)
-        self.assertLess(text.index("](t3code://"), text.index("](https://nightly.example/"))
+        self.assertIn("\n```\nt3code://threads/", text)
+        self.assertNotIn("nightly.example", text)
+        self.assertNotIn("open in T3", text)
         card = result.structuredContent
         self.assertEqual(card["digest"], text)
         self.assertEqual(card["phase"], "handoff")
@@ -129,7 +128,7 @@ class Apps(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(OWNER, json.dumps(card))
         status = await self.call("delegation_status", {"threadIds": [launch["threadId"]], "moment": "check-in", "owner": OWNER})
         self.assertEqual(status.content[0].text, status.structuredContent["digest"])
-        self.assertTrue(status.content[0].text.startswith("Card: expand the show_delegation result"))
+        self.assertNotIn("Card: expand", status.content[0].text)
         self.assertIn("**Check-in**", status.content[0].text)
         legacy = await self.call("show_delegation", {"threadId": launch["threadId"], "phase": "encargo", "owner": OWNER})  # deprecated alias
         self.assertFalse(legacy.isError)
@@ -145,6 +144,24 @@ class Apps(unittest.IsolatedAsyncioTestCase):
             delegation_card(row(), "check-in", "x")
         with self.assertRaises(ValueError):
             digest([row()], "later", None)
+
+    def test_digest_is_compact_and_demo_safe(self):
+        rows = [row(target="mac", webOrigin="https://demo-host.example:3773", place="scratch folder Users/someone/.t3/scratch/x"),
+                row(n=2, threadId="019f0aae-1111-4222-8333-777788889999", status="completed", target="mac",
+                    webOrigin="https://demo-host.example:3773", place="main checkout")]
+        text = digest(rows, "wrap-up", 0)
+        for leak in ("ts.net", "demo-host", "example", "https://", "http://", "Users/", "scratch", "🌐", "open in T3"):
+            self.assertNotIn(leak, text)
+        lines = text.split("\n")
+        self.assertTrue(lines[0].startswith("**Wrap-up** · repo · mac · seen "))
+        self.assertIn("**#1 · Working · Review**  ", lines)
+        self.assertIn("claudeAgent · ` test-model ` · 019f0aae", lines)
+        self.assertEqual(text.count("```\nt3code://threads/"), 2)
+        block = lines.index(f"t3code://threads/{ENV}/019f0aae-aaaa-4222-8333-444455556666")
+        self.assertEqual((lines[block - 1], lines[block + 1]), ("```", "```"))
+        mixed = digest([row(target="mac"), row(n=2, target="omarchy")], "check-in", None)
+        self.assertIn("several projects or targets", mixed)
+        self.assertIn("· repo · omarchy", mixed)
 
     async def test_missing_thread_is_an_error_without_a_card(self):
         result = await self.call("show_delegation", {"threadId": "019f0aae-aaaa-4222-8333-444455556666", "phase": "handoff", "owner": OWNER})
@@ -172,14 +189,13 @@ class Apps(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(local["appUrl"].startswith("t3code://threads/"))
         bare = row()
         text = digest([bare], "wrap-up", None)
-        self.assertTrue(text.startswith("Card: expand the show_delegation result"))
-        self.assertIn("[open in T3 ↗](t3code://threads/", text)
-        self.assertIn("` t3code://threads/", text)
+        self.assertNotIn("Card: expand", text)
+        self.assertIn(f"```\nt3code://threads/{ENV}/019f0aae-aaaa-4222-8333-444455556666\n```", text)
         self.assertNotIn("](https://", text)
         self.assertNotIn("](http://", text)
         local_text = digest([row(webOrigin="http://127.0.0.1:3773")], "wrap-up", None)
-        self.assertIn("[open in T3 ↗](t3code://threads/", local_text)
-        self.assertIn("[local ↗](http://127.0.0.1:3773/", local_text)
+        self.assertIn("```\nt3code://threads/", local_text)
+        self.assertNotIn("127.0.0.1", local_text)
         bare_card = delegation_card(bare, "handoff", text)
         self.assertTrue(bare_card["appUrl"].startswith("t3code://threads/"))
         self.assertNotIn("httpsUrl", bare_card)

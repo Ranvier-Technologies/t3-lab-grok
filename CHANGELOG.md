@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.9
+
+Compact, demo-safe text digest (for screen recordings, e.g. on an iPhone).
+
+- **Per thread:** a bold `**#N · status · title**` header, then `provider · model · short id`. The `[open in T3 ↗]` link, inline raw URL, and host line are gone from the prose.
+- **Deep link in a code block:** `t3code://threads/<env>/<thread>` sits alone in a fenced code block under each thread, so it can be copied on a phone (the Grok Bot iOS chat does not open `t3code://` on tap; pasting into Safari opens the T3 app). The text digest carries no https fallback.
+- **No hostnames, IPs, or origins** (tailnet `ts.net` names included) and no checkout or scratch paths are added to the digest (the caller-supplied thread title is printed as given). The group header is now `Heading · project · target · seen HH:MM`; mixed groups say `several projects or targets` and add `project · target` per thread.
+- The leading "Card: expand the show_delegation result…" hint is gone from the text digest: the server cannot tell whether the host renders MCP Apps cards, and the card works on its own.
+- The MCP Apps card and its structured data are unchanged (t3code first, web as fallback).
+
 ## 0.3.8
 
 Onboarding fixes from a stranger-style setup run (fresh clone, isolated config, remote tailnet target).

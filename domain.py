@@ -251,17 +251,13 @@ def thread_urls(row):
 
 
 def link_line(row):
-    """t3code:// first: it opens the thread in the T3 app. The web page needs a paired browser."""
-    app, web, scheme = thread_urls(row)
-    bits = []
-    if app:
-        bits.append(f"[open in T3 ↗]({app})")
-        bits.append(inline_code(app))
-    if web and scheme == "https":
-        bits.append(f"[web (needs paired browser) ↗]({web})")
-    elif web and scheme == "http":
-        bits.append(f"[local ↗]({web})")
-    return " · ".join(bits)
+    """Bare t3code:// deep link in its own fenced block, so a phone can copy it.
+
+    Chat clients (Grok Bot iOS) do not open t3code:// when tapped; copying into Safari does.
+    No web origin here: hostnames and tailnet origins never go into the text digest.
+    """
+    app, _web, _scheme = thread_urls(row)
+    return f"```\n{app}\n```" if app else ""
 
 
 def row_signature(row):
@@ -298,34 +294,44 @@ def delegation_card(row, phase, digest_text):
     return card
 
 
-DIGEST_TRAIL = (
-    "Card: expand the show_delegation result in the tools panel (like tldraw)."
-)
-
-
 def digest(rows, moment, observed_at):
     try:
         moment = canonical_moment(moment)
     except ValueError as error:
         raise ValueError("moment " + str(error)) from None
     heading = HEADINGS[moment]
-    locations = {(row['project'], row['place']) for row in rows}
-    location = f"{plain(rows[0]['project'])} · {plain(rows[0]['place'])}" if len(locations) == 1 else "several projects or checkouts"
+    def where(row):
+        """Project and target name only: no checkout paths, hostnames, or origins."""
+        return " · ".join(plain(part) for part in (row.get("project"), row.get("target")) if part)
+    locations = {where(row) for row in rows}
+    location = where(rows[0]) if len(locations) == 1 else "several projects or targets"
     observed = "seen " + datetime.fromtimestamp(observed_at).strftime('%H:%M') if observed_at is not None else "no observation yet"
-    lines = [DIGEST_TRAIL, f"**{heading}** · {location} · {observed}"]
+    # No "expand the card" hint: the server cannot tell whether the host renders MCP Apps cards,
+    # and the card works on its own.
+    lines = [" · ".join(bit for bit in (f"**{heading}**", location, observed) if bit)]
     attention = [f"#{row['n']} {LABELS[row['status']].lower()}" for row in rows if row["status"] in {"failed", "waiting_for_input", "waiting_for_approval"}]
     if attention:
         lines.append("Needs your attention: " + " · ".join(attention))
     for row in rows:
-        lines.append(f"#{row['n']} · {LABELS[row['status']]} · {plain(row['title'])}" + (f" · round {row['round']}" if row["round"] > 1 else ""))
+        lines.append(f"**#{row['n']} · {LABELS[row['status']]} · {plain(row['title'])}" + (f" · round {row['round']}" if row["round"] > 1 else "") + "**")
+        thread = quote(row["threadId"], safe="")
+        detail = [plain(row['provider']), inline_code(row['model']), thread[:8]]
         if len(locations) > 1:
-            lines.append(f"{plain(row['project'])} · {plain(row['place'])}")
+            detail.append(where(row))
+        lines.append(" · ".join(bit for bit in detail if bit))
         if row["status"] == "failed":
             lines.append(inline_code(row.get("lastError")))
         if row.get("notice"):
             lines.append(inline_code(row["notice"]))
-        thread = quote(row["threadId"], safe="")
-        lines.append(f"     {plain(row['provider'])} · {inline_code(row['model'])} · {thread[:8]} · {link_line(row)}")
+        link = link_line(row)
+        if link:
+            lines.append(link)
     if moment == "wrap-up" and any(row["status"] in {"waiting_for_input", "waiting_for_approval"} for row in rows):
         lines.append("When you reply in T3, tell me “continue” and I’ll pick it up.")
-    return "  \n".join(lines)
+    out = ""
+    for line in lines:
+        if out:
+            # Markdown hard break between prose lines; plain newlines around fenced blocks.
+            out += "\n" if line.startswith("```") or out.endswith("```") else "  \n"
+        out += line
+    return out

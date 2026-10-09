@@ -281,6 +281,6 @@ class Operations(unittest.IsolatedAsyncioTestCase):
         second = await self.launch(requestKey="other-checkout")
         FakeClient.projections[second["threadId"]]["thread"]["worktreePath"] = "/tmp/other-worktree"
         content = await self.engine.call("delegation_status", {"threadIds": [first["threadId"], second["threadId"]], "moment": "wrap-up"}, OWNER)
-        self.assertTrue(content["digest"].startswith("Card: expand the show_delegation result"))
-        self.assertIn("several projects or checkouts", content["digest"])
-        self.assertIn("worktree tmp/other-worktree", content["digest"])
+        self.assertNotIn("Card: expand", content["digest"])
+        self.assertNotIn("tmp/other-worktree", content["digest"])
+        self.assertEqual(content["digest"].count("```\nt3code://threads/"), 2)

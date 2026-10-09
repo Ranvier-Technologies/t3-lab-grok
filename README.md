@@ -122,7 +122,7 @@ Files under `~/.config/t3-lab/v2` (override with `T3_LAB_V2_CONFIG_DIR`; `script
 
 - New targets get an `approval-required` ceiling. `bind --runtime-ceiling auto-accept-edits|auto|full-access` raises it on purpose. Tool calls may narrow the ceiling, never raise it.
 - With `approval-required`, approvals and questions are answered in the T3 app; the plugin cannot approve.
-- **Remote targets are shared-only:** they run in the bound project root with `workspace: "shared"`. A local checkout or a `worktree` request is refused for remote targets. Exception in practice: T3's scratch project (title **No project**, root `~/.t3/scratch`) gives every thread its own dated subfolder under that root; digests show it as `scratch folder …`, not a git worktree. Project ids prefixed `mcp:` are projects created by an MCP client; they bind like any other.
+- **Remote targets are shared-only:** they run in the bound project root with `workspace: "shared"`. A local checkout or a `worktree` request is refused for remote targets. Exception in practice: T3's scratch project (title **No project**, root `~/.t3/scratch`) gives every thread its own dated subfolder under that root; `read_thread` reports it as `scratch folder …`, not a git worktree (the text digest shows only project and target names). Project ids prefixed `mcp:` are projects created by an MCP client; they bind like any other.
 
 ## Doctor (reachability)
 
@@ -153,7 +153,7 @@ Use a stable `requestKey` per logical launch or continuation. The plugin records
 
 ## MCP Apps card (optional)
 
-On hosts that render MCP Apps, `show_delegation` draws `ui://t3-lab/delegation-card`, which long-polls `delegation_status` (returns within ~2 s of a state change, re-waits every 25 s; adaptive polling if the wait fails). Text-only hosts still get the Markdown digest. There is no automatic wake of an idle parent chat.
+On hosts that render MCP Apps, `show_delegation` draws `ui://t3-lab/delegation-card`, which long-polls `delegation_status` (returns within ~2 s of a state change, re-waits every 25 s; adaptive polling if the wait fails). Text-only hosts still get the Markdown digest: per thread a bold `#N · status · title` line, a `provider · model · short id` line, and the `t3code://threads/<env>/<thread>` deep link alone in a fenced code block so it can be copied on a phone (chat clients such as the Grok Bot iOS app do not open `t3code://` links on tap; pasting into Safari does). The digest itself never adds hostnames, IPs, origins, or checkout paths; the thread title is shown as given, so keep titles free of private details. There is no automatic wake of an idle parent chat.
 
 ## Troubleshooting
 
