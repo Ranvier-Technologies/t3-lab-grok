@@ -2,8 +2,8 @@
 name: t3-delegate
 description: >-
   Use when spawning, awaiting, or following up on a T3 Code Nightly thread from
-  a parent chat (Cursor Agent, Grok Bot, or Codex): pick target, respect
-  runtime ceiling, recover by threadId/requestKey, and report settlement without
+  a parent chat (Cursor Agent, Grok Bot, or Codex): pick target and
+  project, recover by threadId/requestKey, and report settlement without
   moving the parent conversation into T3.
 ---
 
@@ -12,7 +12,7 @@ description: >-
 Use this plugin's MCP tools. Keep the parent conversation in the host chat.
 Do not migrate servers, extract provider credentials, or invent a native T3 parent.
 
-`Delegation = { target, provider, model, runtimeMode ≤ ceiling, requestKey, threadId, settlement }`
+`Delegation = { target, provider, model, project, runtimeMode, requestKey, threadId, settlement }`
 
 Ownership: Codex may supply `_meta.threadId`. Cursor Agent / Grok Bot use the `T3_LAB_OWNER` environment variable (Cursor Plugin variable, set in Plugins → Configure; `mcp.json` passes `${T3_LAB_OWNER}`). **Generate your own owner UUID** for that install (or run `setup.py init`, whose private owner file is the fallback); do not invent a new UUID per call. Setup lives in `skills/t3-lab-setup`.
 
@@ -23,15 +23,15 @@ The MCP stdio server runs on **this host** (the machine that loaded the plugin),
 - Prefer **remote** targets (`kind=remote`) when Nightly runs elsewhere. Their `origin` is whatever pairing wrote (HTTPS off-loopback, or a tunnel URL).
 - A target with `origin` on `127.0.0.1` / `localhost` means **this host's loopback**, not another machine's.
 - Reachability is transport-agnostic: DNS + TCP to the configured host:port. VPN, LAN, or a tunnel all work once the hostname resolves and the port answers. If doctor says unreachable, stop and say so.
-- After `setup.py bind` / re-pair on the Nightly host, re-sync `~/.config/t3-lab/v2` to this host before trusting ceilings or origins.
+- After `setup.py bind` / re-pair on the Nightly host, re-sync `~/.config/t3-lab/v2` to this host before trusting defaults or origins.
 
 Run `scripts/doctor-targets.py` before the first spawn in a session (or when list/spawn fails oddly). Configured ≠ reachable.
 
 ## Launch
 
 1. Call `list_targets`, then `list_providers` for the chosen environment. Never silently substitute provider, model, or destination.
-2. Cap `runtimeMode` at the target's configured ceiling (`runtime_mode` in targets.json). Tool args cannot raise the ceiling; only `setup.py bind --runtime-ceiling …` on the pairing host can. If spawn is rejected for ceiling, stop and report — do not retry higher.
-3. Local launches: pass this chat's actual absolute checkout. Remote launches: pass `target`, omit checkout; use shared at the configured root. Protocol 1 is unsupported.
+2. Pick the project: `list_projects` shows every project on the target; pass `projectId` or `projectTitle`. If the folder is not a project yet, `add_project` with its absolute path on that machine. `runtimeMode` defaults to the target's `runtime_mode`; pass one only when the task needs it.
+3. Local launches: pass this chat's actual absolute checkout. Remote launches: pass `target`, omit checkout; they run shared at the project root. Protocol 1 is unsupported.
 4. Write a complete brief (paths, goal, permissions, checks, return format). The child cannot see this conversation.
 5. Stable `requestKey` per logical task. `shared` sees uncommitted work in place; `worktree` starts from last commit.
 6. Launch independent tasks together. Retain every `threadId` and `requestKey`. On unconfirmed outcome, read that ID or repeat the exact requestKey — never invent a replacement thread.
@@ -59,6 +59,5 @@ When all settle: synthesize from artifacts first, quote each child result once. 
 ## Do not
 
 - Treat loopback targets on this host as a different machine.
-- Raise runtime mode above the configured ceiling via tool args.
 - Count `waiting_for_approval` as task completion.
 - Submit this plugin to a marketplace without an explicit owner ask.

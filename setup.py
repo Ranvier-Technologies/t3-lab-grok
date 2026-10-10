@@ -27,14 +27,15 @@ def parser():
     pair.add_argument("--web-origin", help="Optional user-openable web origin. Never inherited from another environment.")
     pair.add_argument("--accept-read-operate", action="store_true", help="Explicit consent to these broad orchestration scopes; no terminal/review/relay scopes are requested.")
     pair.add_argument("--token-stdin", action="store_true", help="For a trusted local helper: read the code from stdin, not argv. Interactive use prompts with echo disabled.")
-    bind = commands.add_parser("bind", help="Confirm an existing remote project/root; creates no projects.")
+    bind = commands.add_parser("bind", help="Optional: set a target's default project (used when spawn_thread names none) and/or its default runtime mode.")
     bind.add_argument("--target", required=True)
-    bind.add_argument("--project-id", required=True)
-    bind.add_argument("--project-root", required=True)
-    bind.add_argument("--runtime-ceiling", choices=["approval-required", "auto-accept-edits", "auto", "full-access"], default="approval-required")
+    bind.add_argument("--project-id", help="Default project id from `projects`.")
+    bind.add_argument("--project-root", help="Ignored if given; kept for 0.3.x scripts. The root is read from T3.")
+    bind.add_argument("--runtime-mode", "--runtime-ceiling", dest="runtime_mode", choices=["approval-required", "auto-accept-edits", "auto", "full-access"],
+                      help="Default runtime mode; spawn_thread may override it per call.")
     inspect = commands.add_parser("inspect", help="Read public metadata without credentials.")
     inspect.add_argument("--origin", required=True)
-    projects = commands.add_parser("projects", help="List the projects (id and workspaceRoot) a paired target exposes, for bind.")
+    projects = commands.add_parser("projects", help="List every project (id, title, workspaceRoot) in a paired target's environment, marking the default.")
     projects.add_argument("--target", required=True)
     status = commands.add_parser("status", help="Show configuration and credential expiry without revealing tokens.")
     status.add_argument("--probe", action="store_true", help="Read live provider discovery; configured alone is not availability.")
@@ -68,7 +69,8 @@ async def run(args):
         if target is None:
             raise ValueError("Unknown target. Pair it first, then list its projects.")
         projects = (await Client(target, credentials).shell()).get("projects", [])
-        return {"target": target.id, "projects": [{"id": project.get("id"), "title": project.get("title"), "workspaceRoot": project.get("workspaceRoot")} for project in projects]}
+        return {"target": target.id, "projects": [{"id": project.get("id"), "title": project.get("title"), "workspaceRoot": project.get("workspaceRoot"),
+                                                    "default": project.get("id") == target.project_id} for project in projects]}
     if args.command == "inspect":
         origin = origin_url(args.origin)
         async with httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=10) as session:
@@ -116,13 +118,21 @@ async def run(args):
     if args.command == "bind":
         target = next((target for target in load_targets(args.config_dir) if target.id == args.target), None)
         if target is None:
-            raise ValueError("Pair the target before binding its existing project.")
-        projects = (await Client(target, credentials).shell()).get("projects", [])
-        if not any(project["id"] == args.project_id and project["workspaceRoot"] == args.project_root for project in projects):
-            raise ValueError("The server did not confirm that exact project/root. Nothing was changed.")
-        target = Target(**{**target.__dict__, "project_id": args.project_id, "project_root": args.project_root, "runtime_mode": args.runtime_ceiling})
+            raise ValueError("Pair the target before setting its defaults.")
+        changes = {}
+        if args.project_id:
+            projects = (await Client(target, credentials).shell()).get("projects", [])
+            project = next((project for project in projects if project["id"] == args.project_id), None)
+            if project is None:
+                raise ValueError("That project id is not in this environment; run `projects`. Nothing was changed.")
+            changes.update(project_id=project["id"], project_root=project["workspaceRoot"])
+        if args.runtime_mode:
+            changes["runtime_mode"] = args.runtime_mode
+        if not changes:
+            raise ValueError("Pass --project-id and/or --runtime-mode. Nothing was changed.")
+        target = Target(**{**target.__dict__, **changes})
         save_target(args.config_dir, target)
-        return {"bound": True, "target": target.id, "projectId": target.project_id, "projectRoot": target.project_root, "runtimeCeiling": target.runtime_mode}
+        return {"bound": True, "target": target.id, "defaultProjectId": target.project_id, "runtimeMode": target.runtime_mode}
     results = []
     for target in load_targets(args.config_dir):
         row = {"id": target.id, "label": target.label, "environmentId": target.environment_id, "origin": target.origin, "kind": target.kind}

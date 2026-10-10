@@ -1,7 +1,8 @@
 import asyncio
 import json
 import time
-from pathlib import Path
+import uuid
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from client import AuthenticationRequired, Client, Credentials, MutationUnknown, load_targets
 from domain import canonical_moment, row_signature, digest, git_value, observe, resolve_project
@@ -44,11 +45,40 @@ class Engine:
 
     @staticmethod
     def mode(target, requested):
-        ranks = {"approval-required": 0, "auto-accept-edits": 1, "auto": 2, "full-access": 3}
+        """The target's runtime_mode is a default; a call may pick any valid mode."""
         mode = requested or target.runtime_mode
-        if mode not in ranks or ranks[mode] > ranks[target.runtime_mode]:
-            raise ValueError("The requested runtime mode exceeds this target's configured ceiling. No call was sent.")
+        if mode not in {"approval-required", "auto-accept-edits", "auto", "full-access"}:
+            raise ValueError("Unknown runtime mode. No call was sent.")
         return mode
+
+    @staticmethod
+    def project_row(project, target):
+        return {"id": project.get("id"), "title": project.get("title"), "workspaceRoot": project.get("workspaceRoot"),
+                "default": project.get("id") == target.project_id}
+
+    @staticmethod
+    def choose_project(projects, target, project_id=None, title=None, checkout=None):
+        """Pick a project from the live shell: explicit id or title, then the target default, then (local) the
+        checkout's Git identity or (remote) the only project. Anything else is a clear error listing the choices."""
+        choices = "; ".join(f"{project.get('title')} ({project.get('id')})" for project in projects) or "none"
+        if project_id is not None or title is not None:
+            matched = [project for project in projects
+                       if (project_id is None or project.get("id") == project_id)
+                       and (title is None or (project.get("title") or "").casefold() == title.strip().casefold())]
+            if len(matched) == 1:
+                return matched[0]
+            problem = "Several projects match that title" if matched else "No project in this environment matches that id/title"
+            raise ValueError(f"{problem}. Pass a projectId from: {choices}. No thread was launched.")
+        if target.project_id:
+            default = next((project for project in projects if project.get("id") == target.project_id), None)
+            if default is not None:
+                return default
+        if checkout:
+            # A local checkout keeps its Git-identity match, so a thread never runs a checkout under another project.
+            return resolve_project(projects, checkout)
+        if len(projects) == 1:
+            return projects[0]
+        raise ValueError(f"Choose a project with projectId or projectTitle. Available: {choices}. No thread was launched.")
 
     async def submit(self, journal, operation):
         target = self.target(operation["target"], operation["environment"])
@@ -129,6 +159,36 @@ class Engine:
                     runtimeMode=thread.get("runtimeMode", launch["intent"]["runtimeMode"]))
         return self.credentials.redact(data)
 
+    async def add_project(self, arguments):
+        root = arguments["workspaceRoot"].strip()
+        if not root or not (root.startswith("/") or (len(root) > 2 and root[1] == ":" and root[2] in "\\/")):
+            raise ValueError("workspaceRoot must be an absolute path on the target machine. Nothing was sent.")
+        target = self.target(arguments.get("target"))
+        client = Client(target, self.credentials)
+        def same(project):
+            return (project.get("workspaceRoot") or "").rstrip("/\\") == root.rstrip("/\\")
+        existing = next((project for project in (await client.shell()).get("projects", []) if same(project)), None)
+        if existing is not None:
+            return {"created": False, "target": target.id, "project": self.project_row(existing, target)}
+        windows = not root.startswith("/")
+        title = (arguments.get("title") or "").strip() or (PureWindowsPath(root) if windows else PurePosixPath(root)).name or root
+        # Identifiers derive from the environment, requestKey and the exact intent: a retry with the same arguments
+        # resends the identical command (T3 dedupes it), and changed arguments never reuse those identifiers.
+        seed = json.dumps([target.environment_id, arguments["requestKey"], root, title])
+        payload = {"type": "project.create", "commandId": str(uuid.uuid5(uuid.NAMESPACE_URL, "t3-lab-command:" + seed)),
+                   "projectId": str(uuid.uuid5(uuid.NAMESPACE_URL, "t3-lab-project:" + seed)),
+                   "title": title, "workspaceRoot": root, "createWorkspaceRootIfMissing": False}
+        try:
+            project = await client.rpc("projects.mutate", payload)
+        except MutationUnknown:
+            found = next((project for project in (await client.shell()).get("projects", [])
+                          if project.get("id") == payload["projectId"] or same(project)), None)
+            if found is None:
+                raise MutationUnknown("T3 did not confirm the project (it may have rejected the folder, e.g. missing or already registered, "
+                                      "or the reply was lost). The outcome is unknown: check list_projects or retry the exact requestKey and arguments.") from None
+            project = found
+        return {"created": project.get("id") == payload["projectId"], "target": target.id, "project": self.project_row(project, target)}
+
     async def call(self, name, arguments, owner):
         if name == "list_targets":
             return {"targets": [{"id": target.id, "label": target.label, "origin": target.origin, "environmentId": target.environment_id,
@@ -140,6 +200,12 @@ class Engine:
             return {"providers": await client.providers()}
         if name == "list_threads":
             return {"threads": [{"threadId": row["thread_id"], "requestKey": row["request_key"], "target": row["target"], "operationState": row["state"]} for row in journal.threads()]}
+        if name == "list_projects":
+            target = self.target(arguments.get("target"))
+            shell = await Client(target, self.credentials).shell()
+            return {"target": target.id, "projects": [self.project_row(project, target) for project in shell.get("projects", [])]}
+        if name == "add_project":
+            return await self.add_project(arguments)
         if name in {"spawn_thread", "send_to_thread"}:
             key = arguments["requestKey"]
             previous = journal.find(key)
@@ -155,15 +221,18 @@ class Engine:
                 checkout = arguments.get("checkout")
                 if not checkout:
                     raise ValueError("Pass this chat's actual absolute checkout; the plugin cache is not its working directory.")
-                project = resolve_project(shell.get("projects", []), checkout, arguments.get("projectId"))
+                if not Path(checkout).is_absolute() or not Path(checkout).is_dir():
+                    raise ValueError("checkout must be an existing absolute directory on this machine. No thread was launched.")
+                projects = shell.get("projects", [])
+                project = self.choose_project(projects, target, arguments.get("projectId"), arguments.get("projectTitle"), checkout)
+                # The checkout must belong to the chosen project (same Git repository), however it was chosen.
+                resolve_project(projects, checkout, project["id"])
                 strategy = {"type": "existing_worktree", "worktreePath": str(Path(checkout).resolve())} if arguments["workspace"] == "shared" else {
                     "type": "worktree", "baseRef": git_value(checkout, "rev-parse", "HEAD"), "startFromOrigin": False}
             else:
                 if arguments.get("checkout") is not None or arguments["workspace"] != "shared":
-                    raise ValueError("Remote targets use their configured project root and shared workspace. A Mac checkout or an unverified remote worktree is not accepted.")
-                project = next((project for project in shell.get("projects", []) if project["id"] == target.project_id and project["workspaceRoot"] == target.project_root), None)
-                if project is None:
-                    raise ValueError("The configured remote project/root was not confirmed. Bind it through local setup; no project was created.")
+                    raise ValueError("Remote targets run in the project's root with workspace shared. A local checkout or a remote worktree is not accepted.")
+                project = self.choose_project(shell.get("projects", []), target, arguments.get("projectId"), arguments.get("projectTitle"))
                 strategy = {"type": "root"}
             model = arguments["modelSelection"]
             provider = next((provider for provider in await client.providers() if provider["instanceId"] == model["instanceId"]), None)
@@ -178,7 +247,6 @@ class Engine:
         if name == "send_to_thread":
             operation = journal.latest(arguments["threadId"])
             current = await self.read(journal, arguments["threadId"])
-            self.mode(self.target(operation["target"], operation["environment"]), current["runtimeMode"])
             if not current["canContinue"]:
                 raise ValueError("This thread is not ready for a confirmed new round. Resolve questions/approvals in T3 or await it; no message was sent.")
             intent = {"text": arguments["message"], "attachments": [], "createdBy": "user", "creationSource": "mcp", "dispatchMode": {"type": "start_immediately"}}

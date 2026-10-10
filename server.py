@@ -29,7 +29,11 @@ SCHEMAS = {
     "list_targets": ({}, []),
     "list_providers": ({"target": TARGET, "owner": OWNER}, []),
     "list_threads": ({"owner": OWNER}, []),
-    "spawn_thread": ({"target": TARGET, "projectId": TEXT, "checkout": CHECKOUT, "requestKey": KEY, "workspace": {"enum": ["shared", "worktree"]},
+    "list_projects": ({"target": TARGET, "owner": OWNER}, []),
+    "add_project": ({"target": TARGET, "requestKey": KEY, "workspaceRoot": {"type": "string", "minLength": 1, "maxLength": 4096, "description": "Absolute path of an existing folder on the target machine."},
+                     "title": {"type": "string", "maxLength": 200, "description": "Defaults to the folder name."}, "owner": OWNER}, ["requestKey", "workspaceRoot"]),
+    "spawn_thread": ({"target": TARGET, "projectId": {**TEXT, "description": "Project id from list_projects."},
+                      "projectTitle": {**TEXT, "description": "Exact project title (case-insensitive), instead of projectId."}, "checkout": CHECKOUT, "requestKey": KEY, "workspace": {"enum": ["shared", "worktree"]},
                       "prompt": {"type": "string", "minLength": 1, "maxLength": 100000}, "title": {"type": "string", "maxLength": 200}, "modelSelection": MODEL,
                       "runtimeMode": {"enum": ["approval-required", "auto-accept-edits", "auto", "full-access"]}, "owner": OWNER}, ["requestKey", "workspace", "prompt", "modelSelection"]),
     "send_to_thread": ({"threadId": THREAD, "requestKey": KEY, "message": {"type": "string", "minLength": 1, "maxLength": 100000}, "owner": OWNER}, ["threadId", "requestKey", "message"]),
@@ -49,8 +53,10 @@ CARD_PATH = Path(__file__).resolve().parent / "ui" / "delegation-card.html"
 DESCRIPTIONS = {
     "list_targets": "List configured official Nightly environments without connecting. Configured is not proof of availability. Pairing uses the local setup CLI, never tokens in tool arguments.",
     "list_providers": "Read the selected environment's current providers and exact models. Call before launch; never silently substitute a requested provider/model.",
+    "list_projects": "List every project in the target environment's live T3 snapshot: id, title, workspaceRoot, and whether it is the target's default. Any of them can be passed to spawn_thread.",
+    "add_project": "Register an existing folder on the target machine as a T3 project (projects.mutate project.create; the folder is never created). Idempotent: an already-registered root returns that project with created=false, and a retry with the same requestKey resends the same command. Returns the project.",
     "list_threads": "List only operations this parent chat owns, including pending/unconfirmed requests. Recover by recorded requestKey, not by title/date or another chat's history.",
-    "spawn_thread": "Launch one ordinary T3 thread on the selected official environment. It belongs to this parent chat's local journal, not a fabricated T3 parent. Pass actual local checkout; remote uses configured project root. shared sees uncommitted work; worktree starts at the current local HEAD commit. requestKey and exact payload persist before sending, so recovery uses the same command/thread/message IDs. An unconfirmed outcome is unknown, not failure; do not launch a replacement.",
+    "spawn_thread": "Launch one ordinary T3 thread on the selected official environment. It belongs to this parent chat's local journal, not a fabricated T3 parent. Choose the project with projectId or projectTitle (see list_projects); otherwise the target default, the only project, or (local) the checkout's Git project is used. Pass the actual local checkout for local targets; remote targets run in the project root with workspace shared. runtimeMode overrides the target default. shared sees uncommitted work; worktree starts at the current local HEAD commit. requestKey and exact payload persist before sending, so recovery uses the same command/thread/message IDs. An unconfirmed outcome is unknown, not failure; do not launch a replacement.",
     "send_to_thread": "Continue an owned settled thread on the same provider/model. Use a new stable requestKey for this round. Questions/approvals must be answered in T3; this tool cannot approve. An unconfirmed send hides the old answer until its exact message is observed. Recover with the same requestKey/arguments, never a new message ID.",
     "read_thread": "Read the latest round of a thread this chat owns, with current state and response. No previous-round reply is returned for an unconfirmed send. Not found/unreadable data is unknown; never switch environments to resolve it.",
     "await_thread": "Wait at most 45 seconds for the owned thread to settle or need the user. Timeout does not cancel or fail it. Await again on the same ID; background children mean work remains. No automatic idle-chat wake is promised.",
@@ -76,12 +82,12 @@ def build_server(config_root=None, state_root=None):
     config_root = config_root or os.environ.get("T3_LAB_V2_CONFIG_DIR") or Path.home() / ".config/t3-lab/v2"
     state_root = state_root or os.environ.get("T3_LAB_V2_STATE_DIR") or Path.home() / ".local/state/t3-lab-v2/chats"
     engine = Engine(config_root, state_root)
-    app = Server("t3-lab-grok", version="0.3.9")
+    app = Server("t3-lab-grok", version="0.4.0")
     definitions = {name: {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
                    for name, (properties, required) in SCHEMAS.items()}
 
     def tool_definition(name, schema):
-        writing = name in {"spawn_thread", "send_to_thread"}
+        writing = name in {"spawn_thread", "send_to_thread", "add_project"}
         payload = {"name": name, "description": DESCRIPTIONS[name], "inputSchema": schema,
                    "annotations": {"readOnlyHint": not writing, "destructiveHint": writing, "openWorldHint": writing, "idempotentHint": True}}
         if name == "show_delegation":

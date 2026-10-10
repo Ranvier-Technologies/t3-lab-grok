@@ -48,7 +48,7 @@ class Target:
     origin: str
     environment_id: str
     kind: str = "local"
-    project_id: str | None = None
+    project_id: str | None = None  # optional default project (legacy 0.3.x binding)
     project_root: str | None = None
     web_origin: str | None = None
     runtime_mode: str = "approval-required"
@@ -59,7 +59,7 @@ class Target:
         if self.kind not in {"local", "remote"}:
             raise ValueError("Target kind must be local or remote.")
         if self.kind == "local" and urlsplit(self.origin).hostname not in {"localhost", "127.0.0.1", "::1"}:
-            raise ValueError("A local target must be loopback; remote targets use configured project/root.")
+            raise ValueError("A local target must be loopback; use a remote target for other hosts.")
         if self.web_origin:
             origin_url(self.web_origin)
         if self.runtime_mode not in {"approval-required", "auto-accept-edits", "auto", "full-access"}:
@@ -205,7 +205,7 @@ class Client:
         return projection
 
     async def rpc(self, method, payload):
-        if method not in {"server.getConfig", "orchestration.launchThread", "orchestration.dispatchCommand"}:
+        if method not in {"server.getConfig", "orchestration.launchThread", "orchestration.dispatchCommand", "projects.mutate"}:
             raise ValueError("This facade does not expose that RPC method.")
         ticket = await self.request("POST", "/api/auth/websocket-ticket")
         uri = self.target.origin.replace("https://", "wss://", 1).replace("http://", "ws://", 1)

@@ -3,7 +3,7 @@ name: t3-lab-setup
 description: >-
   Use when installing, repairing, or re-checking the t3-lab-grok plugin on this
   host (a Grok Bot box, a Cursor machine, or any stdio MCP host): reach a T3 Code
-  Nightly origin, pair once with a one-time code, bind projects, register the
+  Nightly origin, pair once with a one-time code, list projects, register the
   MCP server, and verify with a tiny test spawn. Re-running it is doctor + repair.
 ---
 
@@ -16,8 +16,7 @@ Every step has a check. Do not move on until the check passes. If a step is alre
 
 - **Secrets never go through chat.** Never ask the user to paste a pairing code or a Tailscale auth key into the conversation, and never put one in a tool argument, a file in the repo, a log, or a command line. Ask for them through the host's secure secret input (Grok Bot: a secret/environment variable) as `T3_PAIRING_CODE` and `TS_AUTHKEY`, and pass them only through stdin or the environment. Never echo them.
 - **A pairing code is consumed even when pairing fails.** On any pairing failure, do not retry with the same code; ask the user for a new one (`t3 auth pairing create`, or T3 Settings → Connections) through the secret input.
-- **Ask only what you cannot infer:** tailnet vs public HTTPS origin, the origin URL if unknown, which projects to bind, and the runtime ceiling if they want more than `approval-required`. Everything else you can check yourself.
-- Never raise a runtime ceiling the user did not ask for. Never create T3 projects; bind existing ones.
+- **Ask only what you cannot infer:** tailnet vs public HTTPS origin, the origin URL if unknown, and a default project or runtime mode if they want one. Everything else you can check yourself.
 - If a check fails twice for the same reason, stop and report the exact failing check.
 
 ## 1. Prerequisites
@@ -84,16 +83,18 @@ Use `--kind local` only for a loopback origin on this same host. Add `--web-orig
 uv run --frozen python setup.py projects --target <TARGET_ID>
 ```
 
-Show the user the project titles and roots and ask which one to bind. **No project** is T3's scratch project (root `~/.t3/scratch`): a safe default for checks; each thread there gets its own dated subfolder. Ids prefixed `mcp:` are projects created by an MCP client and bind normally. A target binds one project; for another project on the same environment, pair again under a new target id with a new code.
+One pairing per machine covers all of its projects: bots pick one per `spawn_thread` (`projectId` or `projectTitle`), see them with `list_projects`, and can register an existing folder with `add_project`. **No project** is T3's scratch project (root `~/.t3/scratch`): handy for checks; each thread there gets its own dated subfolder. Ids prefixed `mcp:` are projects created by an MCP client and work normally.
 
 ```sh
-uv run --frozen python setup.py bind --target <TARGET_ID> --project-id <ID> --project-root <WORKSPACE_ROOT>
-# optional, only if the user asks: --runtime-ceiling auto-accept-edits|auto|full-access
+# optional: a default project for spawns that name none
+uv run --frozen python setup.py bind --target <TARGET_ID> --project-id <ID>
+# optional: a default runtime mode (approval-required, auto-accept-edits, auto, or full-access)
+uv run --frozen python setup.py bind --target <TARGET_ID> --runtime-mode auto-accept-edits
 python3 scripts/doctor-targets.py --require-remote <TARGET_ID>   # honors T3_LAB_V2_CONFIG_DIR (or pass --config)
 uv run --frozen python setup.py status --probe
 ```
 
-**Check:** `bind` prints `"bound": true`; doctor exits 0; `status --probe` shows `"authentication": "stored"` and a provider list for the target.
+**Check:** `projects` lists the environment's projects; doctor exits 0; `status --probe` shows `"authentication": "stored"` and a provider list for the target.
 
 ## 4. Register the MCP server
 
@@ -130,15 +131,16 @@ PY
 
 1. `list_targets` → `{}`. Shows the target with `connection: configured`.
 2. `list_providers` → `{"target": "<TARGET_ID>"}`. At least one provider with `"ready": true` and a model.
-3. `spawn_thread` (remote: omit `checkout`; `workspace` must be `shared`):
+3. `list_projects` → `{"target": "<TARGET_ID>"}`. Pick a project (scratch **No project** is fine for a check).
+4. `spawn_thread` (remote: omit `checkout`; `workspace` must be `shared`):
    ```json
-   {"target": "<TARGET_ID>", "requestKey": "setup-check-<UTC timestamp>", "workspace": "shared", "runtimeMode": "approval-required",
+   {"target": "<TARGET_ID>", "projectId": "<id from list_projects>", "requestKey": "setup-check-<UTC timestamp>", "workspace": "shared", "runtimeMode": "approval-required",
     "modelSelection": {"instanceId": "<instanceId from list_providers>", "model": "<model>"},
     "prompt": "Reply with the word ready. Do not edit files."}
    ```
-   Returns `threadId` and `operationState: "accepted"`. Use a fresh `requestKey` for every new check (re-running step 5 with an old key returns the earlier thread, or is refused if the arguments changed); reuse a key only to recover that same launch.
-4. Follow it with `await_thread` → `{"threadId": "<id>"}`, or with the card: `delegation_status` → `{"threadIds": ["<id>"], "moment": "handoff", "waitSeconds": 25}`, then repeat with `"moment": "check-in"` and `"since": "<signature from the last result>"`.
-5. Confirm with `read_thread` → `{"threadId": "<id>"}`.
+   Returns `threadId` and `operationState: "accepted"`. Use a fresh `requestKey` for every new check (re-running this check with an old key returns the earlier thread, or is refused if the arguments changed); reuse a key only to recover that same launch.
+5. Follow it with `await_thread` → `{"threadId": "<id>"}`, or with the card: `delegation_status` → `{"threadIds": ["<id>"], "moment": "handoff", "waitSeconds": 25}`, then repeat with `"moment": "check-in"` and `"since": "<signature from the last result>"`.
+6. Confirm with `read_thread` → `{"threadId": "<id>"}`.
 
 Status vocabulary: the card's **Working** = `running`; **Turn done** = the turn finished, which `read_thread`/`await_thread` report as `"status": "completed"`, `"settled": true` with the reply in `lastAssistantMessage`. **Waiting for your approval** / **Waiting for your reply** = a pending approval or question; **Failed** shows `lastError`.
 

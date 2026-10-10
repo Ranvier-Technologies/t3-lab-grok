@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0
+
+Many projects per target, and bots can add projects.
+
+- **No more bound project.** After pairing, `spawn_thread` (remote and local) accepts any project in the environment's live snapshot, by `projectId` or by exact `projectTitle` (case-insensitive). With neither: the target's default project, else the checkout's Git project (local) or the only project (remote), else an error listing the projects. Remote targets still run shared in the project root.
+- **New `list_projects(target)`:** id, title, workspaceRoot, and whether it is the target default.
+- **New `add_project(target, requestKey, workspaceRoot, title?)`:** `projects.mutate` `project.create` with `createWorkspaceRootIfMissing: false`; title defaults to the folder name. Idempotent: ids derive from the environment, `requestKey` and the exact arguments (changed arguments never reuse them), an unconfirmed outcome is reported as unknown, and an already-registered root returns that project (`created: false`). Rejects only empty or relative paths; T3 reports missing folders. Local launches check that the checkout belongs to the chosen project.
+- **Runtime mode is a default**, overridable per call; it is no longer a ceiling.
+- **Config migration:** 0.3.x `project_id`/`project_root` keep working as the default project. `setup.py bind` is optional (`--project-id` and/or `--runtime-mode`; `--project-root` and `--runtime-ceiling` still accepted). `setup.py projects` marks the default.
+- Setup skill: one pairing per machine covers all its projects; the "pair again per project" and "never create projects" rules are gone.
+
 ## 0.3.9
 
 Compact, demo-safe text digest (for screen recordings, e.g. on an iPhone).

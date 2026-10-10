@@ -36,7 +36,7 @@ class Package(unittest.TestCase):
         self.assertFalse((self.root / "plugin.json").exists(), "root Agent plugin.json must not sit beside the Cursor Plugin manifest")
         manifest = json.loads((self.root / ".cursor-plugin" / "plugin.json").read_text())
         interface = manifest["extensions"]["com.openai"]["interface"]
-        self.assertEqual((manifest["name"], manifest["version"], interface["displayName"]), ("t3-lab-grok", "0.3.9", "T3 Lab Grok"))
+        self.assertEqual((manifest["name"], manifest["version"], interface["displayName"]), ("t3-lab-grok", "0.4.0", "T3 Lab Grok"))
         self.assertEqual(interface["defaultPrompt"], "Ask Claude and Grok for a second opinion on a file, in parallel.")
         self.assertLessEqual(len(interface["shortDescription"]), 30)
         self.assertNotIn("Local private use", interface["longDescription"])
@@ -53,7 +53,7 @@ class Package(unittest.TestCase):
         self.assertEqual(logo[:8], bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))
         self.assertEqual((int.from_bytes(logo[16:20], "big"), int.from_bytes(logo[20:24], "big")), (180, 180))
         self.assertIn("T3 Tools", (self.root / "assets/T3-LICENSE.txt").read_text())
-        self.assertIn('version = "0.3.9"', (self.root / "pyproject.toml").read_text())
+        self.assertIn('version = "0.4.0"', (self.root / "pyproject.toml").read_text())
 
     def test_runtime_uses_the_packaged_entrypoint_not_legacy_board(self):
         runtime = json.loads((self.root / "mcp.json").read_text())["mcpServers"]

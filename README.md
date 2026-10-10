@@ -31,7 +31,7 @@ Status: prepared for public/community use; **not published yet** to the Cursor M
 
 1. Install the code (Cursor local plugin or any checkout, below).
 2. `uv run --frozen python setup.py init` — creates your private owner UUID.
-3. `inspect` → `pair` → `projects` → `bind` (below).
+3. `inspect` → `pair` → `projects` (below). `bind` is optional: it only sets a default project.
 4. Register or reload the MCP server, then `list_targets` / `list_providers`.
 
 A step-by-step, check-by-check version that an agent can follow on its own is in [`skills/t3-lab-setup/SKILL.md`](skills/t3-lab-setup/SKILL.md).
@@ -57,7 +57,7 @@ Your Grok Bot runs the MCP server on its own box, so the box must reach your Nig
 Then ask your bot to follow `skills/t3-lab-setup`. In short:
 
 1. Clone to an absolute path on the box, e.g. `/workspace/plugins/t3-lab-grok`.
-2. Run `init`, `inspect`, `pair --token-stdin`, `projects`, `bind`, doctor (next section). Give the bot the pairing code through its secret input (for example as `T3_PAIRING_CODE`), never in chat.
+2. Run `init`, `inspect`, `pair --token-stdin`, `projects`, doctor (next section). Give the bot the pairing code through its secret input (for example as `T3_PAIRING_CODE`), never in chat.
 3. Register a stdio MCP server:
    - command `uv`
    - args `run --frozen --directory /workspace/plugins/t3-lab-grok python server.py`
@@ -75,7 +75,7 @@ Journal entries are partitioned by an owner UUID, so one install cannot read ano
 
 You never need to invent a UUID: `init` generates one, stores it with mode 600, and prints it. Re-running it prints the same value. Do not reuse someone else's owner UUID.
 
-## Pair and bind (outside the chat)
+## Pair (outside the chat)
 
 Keep pairing codes and bearer tokens out of chat, tool arguments, package files, and logs.
 
@@ -105,24 +105,42 @@ printf '%s' "$T3_PAIRING_CODE" | uv run --frozen python setup.py pair \
 
 `pair` refuses to wait on a hidden prompt when there is no terminal; use `--token-stdin` there. `--trust-inspected-environment` replaces `--environment-id` with whatever the origin reports at that moment. The input may be the bare code or a full pairing link (`…/pair#token=…`). The link T3 shows can name a LAN or `http://` address that differs from your `--origin`; `pair` then warns and uses only the link's token, sent to `--origin`. Pass `--label "<host> t3-lab-grok"` so the client is recognizable (and revocable) in T3 Settings → Connections; the default label is `Cursor plugin`. **A code is consumed even if pairing fails**; ask for a new one instead of retrying.
 
-Then bind the existing project the target should work in:
+One pairing per machine covers every project on it. List them, and optionally pick a default project and default runtime mode:
 
 ```sh
 uv run --frozen python setup.py projects --target remote-dev
-uv run --frozen python setup.py bind --target remote-dev \
-  --project-id PROJECT_ID --project-root /absolute/path/on/that/host
+uv run --frozen python setup.py bind --target remote-dev --project-id PROJECT_ID   # optional
 uv run --frozen python setup.py status --probe
 ```
 
-For Nightly on the same machine use `--kind local` with a loopback origin (`http://127.0.0.1:3773`) and optionally `--web-origin http://localhost:3773`; local launches pass the chat's own checkout instead of a bound root.
+Configs from 0.3.x keep working: their bound project becomes the default.
+
+For Nightly on the same machine use `--kind local` with a loopback origin (`http://127.0.0.1:3773`) and optionally `--web-origin http://localhost:3773`; local launches pass the chat's own checkout.
 
 Files under `~/.config/t3-lab/v2` (override with `T3_LAB_V2_CONFIG_DIR`; `scripts/doctor-targets.py` honors it too): `targets.json`, `owner`, and `credentials/<environment>.json`, all mode 600 in mode-700 directories. Credentials are refused if the file is readable by others, or if its directory is writable by others. Stored credentials last about 30 days; re-pair on expiry. The journal lives in `~/.local/state/t3-lab-v2/chats` (`T3_LAB_V2_STATE_DIR`).
 
-## Runtime ceiling and remote targets
+## Tools (11)
 
-- New targets get an `approval-required` ceiling. `bind --runtime-ceiling auto-accept-edits|auto|full-access` raises it on purpose. Tool calls may narrow the ceiling, never raise it.
+| Tool | Does |
+|---|---|
+| `list_targets` | Configured environments (no network). |
+| `list_providers` | Live providers and models of a target. |
+| `list_projects` | Every project in the target's environment: id, title, workspaceRoot, default flag. |
+| `add_project` | Register an existing folder on the target as a T3 project (idempotent; returns the existing project if the root is already registered). |
+| `list_threads` | Operations this chat owns. |
+| `spawn_thread` | Launch a thread in any project (`projectId` or `projectTitle`). |
+| `send_to_thread` | Next round on a settled owned thread. |
+| `read_thread` / `await_thread` | Current state and reply. |
+| `delegation_status` | Markdown digest for owned threads. |
+| `show_delegation` | MCP Apps card plus digest. |
+
+Project choice for `spawn_thread`: `projectId` or `projectTitle` (case-insensitive) first; otherwise the target's default project; otherwise, for a local target, the project matching the checkout's Git repository, and for a remote target the only project. Anything else returns an error listing the projects.
+
+## Runtime mode and remote targets
+
+- A target's `runtime_mode` (default `approval-required`, set with `bind --runtime-mode`) is the default; `spawn_thread` may pass any `runtimeMode`.
 - With `approval-required`, approvals and questions are answered in the T3 app; the plugin cannot approve.
-- **Remote targets are shared-only:** they run in the bound project root with `workspace: "shared"`. A local checkout or a `worktree` request is refused for remote targets. Exception in practice: T3's scratch project (title **No project**, root `~/.t3/scratch`) gives every thread its own dated subfolder under that root; `read_thread` reports it as `scratch folder …`, not a git worktree (the text digest shows only project and target names). Project ids prefixed `mcp:` are projects created by an MCP client; they bind like any other.
+- **Remote targets are shared-only:** they run in the chosen project's root with `workspace: "shared"`. A local checkout or a `worktree` request is refused for remote targets. Exception in practice: T3's scratch project (title **No project**, root `~/.t3/scratch`) gives every thread its own dated subfolder under that root; `read_thread` reports it as `scratch folder …`, not a git worktree (the text digest shows only project and target names). Project ids prefixed `mcp:` are projects created by an MCP client; they work like any other.
 
 ## Doctor (reachability)
 
@@ -138,8 +156,8 @@ Transport-agnostic: DNS + TCP to each target origin (VPN, LAN, or tunnel all loo
 ## First spawn
 
 1. `list_targets` → pick a reachable target
-2. `list_providers` for that environment
-3. `spawn_thread` with a stable `requestKey`, a complete brief, and `runtimeMode` ≤ ceiling
+2. `list_providers` and `list_projects` for that environment (`add_project` if the folder is not a project yet)
+3. `spawn_thread` with a stable `requestKey`, the project, a complete brief, and optionally `runtimeMode`
 4. After success, `show_delegation` once with `phase` `handoff`; paste the Markdown `content` into chat as the trail
 5. `await_thread` / `read_thread` to recover; use the same `requestKey` + args after a cut
 

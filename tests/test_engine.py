@@ -126,7 +126,7 @@ class Operations(unittest.IsolatedAsyncioTestCase):
 
     async def test_validation_rejects_foreign_checkout_and_unknown_model_before_mutation(self):
         other = repo(self.root / "other")
-        for changes in ({"checkout": str(other)}, {"modelSelection": {"instanceId": "claudeAgent", "model": "not-a-model"}}, {"runtimeMode": "full-access"}):
+        for changes in ({"checkout": str(other)}, {"modelSelection": {"instanceId": "claudeAgent", "model": "not-a-model"}}):
             with self.assertRaises(ValueError):
                 await self.launch(**changes)
         self.assertFalse(any(call[0] == "orchestration.launchThread" for call in FakeClient.calls))
@@ -159,12 +159,11 @@ class Operations(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(observed["settled"])
         self.assertTrue(observed["timedOut"])
 
-    async def test_send_cannot_drive_a_thread_above_the_configured_mode_ceiling(self):
-        launch = await self.launch()
-        FakeClient.projections[launch["threadId"]]["thread"]["runtimeMode"] = "full-access"
-        with self.assertRaises(ValueError):
-            await self.engine.call("send_to_thread", {"threadId": launch["threadId"], "requestKey": "raised-thread", "message": "Continue"}, OWNER)
-        self.assertFalse(any(call[0] == "orchestration.dispatchCommand" for call in FakeClient.calls))
+    async def test_runtime_mode_is_a_default_that_a_call_may_override(self):
+        await self.launch()
+        await self.launch(requestKey="raised", runtimeMode="full-access")
+        modes = [call[1]["runtimeMode"] for call in FakeClient.calls if call[0] == "orchestration.launchThread"]
+        self.assertEqual(modes, ["approval-required", "full-access"])
 
     async def test_optional_shell_failure_does_not_erase_a_valid_response(self):
         launch = await self.launch()
