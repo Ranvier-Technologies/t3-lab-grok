@@ -27,6 +27,11 @@ class FakeClient:
 
     async def rpc(self, name, payload):
         FakeClient.calls.append((name, dict(payload)))
+        if name == "projects.ensureScratch":
+            if self.fail_create:
+                raise MutationUnknown("Synthetic failure")
+            FakeClient.projects.append({"id": "scratch-fixture", "title": "No project", "workspaceRoot": "/srv/fixture/.t3/scratch"})
+            return {"projectId": "scratch-fixture"}
         if name == "projects.mutate":
             if self.fail_create:
                 raise MutationUnknown("Synthetic failure")
@@ -51,8 +56,66 @@ class Projects(unittest.IsolatedAsyncioTestCase):
 
     async def spawn(self, key="k1", **changes):
         arguments = {"target": "box", "requestKey": key, "workspace": "shared", "prompt": "Reply OK", "modelSelection": MODEL, **changes}
-        await self.engine.call("spawn_thread", arguments, OWNER)
+        self.result = await self.engine.call("spawn_thread", arguments, OWNER)
         return [call[1] for call in FakeClient.calls if call[0] == "orchestration.launchThread"][-1]
+
+    def write_target(self, **fields):
+        item = {"id": "box", "label": "Box", "origin": "https://t3.example.test", "environment_id": ENV, "kind": "remote", **fields}
+        (self.config / "targets.json").write_text(json.dumps({"version": 2, "targets": [item]}))
+
+    async def test_no_project_falls_back_to_existing_scratch_with_a_warning(self):
+        FakeClient.projects.append({"id": "scratch-fixture", "title": "No project", "workspaceRoot": "/srv/fixture/.t3/scratch"})
+        payload = await self.spawn()
+        self.assertEqual((payload["projectId"], payload["workspaceStrategy"]), ("scratch-fixture", {"type": "root"}))
+        self.assertEqual(self.result["project"], {"id": None, "title": "No project", "resolvedBy": "scratch"})
+        self.assertIn("scratch", self.result["warning"])
+        self.assertFalse(any(call[0] == "projects.ensureScratch" for call in FakeClient.calls))
+
+    async def test_missing_scratch_is_requested_from_t3_not_the_only_project(self):
+        FakeClient.projects = FakeClient.projects[:1]
+        payload = await self.spawn()
+        self.assertEqual(payload["projectId"], "scratch-fixture")
+        self.assertIn(("projects.ensureScratch", {}), FakeClient.calls)
+
+    async def test_unconfirmed_scratch_launches_nothing(self):
+        FakeClient.fail_create = True
+        with self.assertRaises(MutationUnknown) as caught:
+            await self.spawn()
+        self.assertIn("list_projects", str(caught.exception))
+        self.assertFalse(any(call[0] == "orchestration.launchThread" for call in FakeClient.calls))
+
+    async def test_explicit_selection_reports_how_it_resolved_without_warning(self):
+        await self.spawn(projectTitle="beta")
+        self.assertEqual(self.result["project"], {"id": "p-beta", "title": "Beta", "resolvedBy": "projectTitle"})
+        self.assertNotIn("warning", self.result)
+        await self.spawn(key="k2", projectId="p-alpha")
+        self.assertEqual(self.result["project"]["resolvedBy"], "projectId")
+
+    async def test_ambiguous_or_unknown_project_lists_choices(self):
+        FakeClient.projects.append({"id": "p-dup", "title": "alpha", "workspaceRoot": "/srv/fixture/dup"})
+        for index, changes in enumerate(({"projectTitle": "Gamma"}, {"projectId": "p-missing"}, {"projectTitle": "Alpha"})):
+            with self.assertRaises(ValueError) as caught:
+                await self.spawn(key=f"k{index}", **changes)
+            self.assertIn("Beta (p-beta)", str(caught.exception))
+        self.assertFalse(any(call[0] == "orchestration.launchThread" for call in FakeClient.calls))
+
+    async def test_explicit_bind_default_is_used_with_a_warning(self):
+        self.write_target(default_project_id="p-beta", runtime_mode="auto")
+        payload = await self.spawn()
+        self.assertEqual((payload["projectId"], payload["runtimeMode"]), ("p-beta", "auto"))
+        self.assertEqual(self.result["project"]["resolvedBy"], "default")
+        self.assertIn("Beta", self.result["warning"])
+        listed = await self.engine.call("list_projects", {"target": "box"}, OWNER)
+        self.assertEqual([(row["id"], row["default"]) for row in listed["projects"]], [("p-alpha", False), ("p-beta", True)])
+
+    async def test_legacy_binding_no_longer_defaults_and_scratch_binding_stays_scratch(self):
+        FakeClient.projects.append({"id": "scratch-fixture", "title": "No project", "workspaceRoot": "/srv/fixture/.t3/scratch"})
+        self.write_target(project_id="p-beta", project_root="/srv/fixture/beta")
+        self.assertEqual(load_targets(self.config)[0].project_id, "p-beta")
+        self.assertEqual((await self.spawn())["projectId"], "scratch-fixture")
+        self.write_target(default_project_id="scratch-fixture")
+        self.assertEqual((await self.spawn(key="k2"))["projectId"], "scratch-fixture")
+        self.assertEqual(self.result["project"]["resolvedBy"], "scratch")
 
     async def test_spawn_by_project_id(self):
         payload = await self.spawn(projectId="p-beta")
@@ -60,31 +123,6 @@ class Projects(unittest.IsolatedAsyncioTestCase):
 
     async def test_spawn_by_title_is_case_insensitive(self):
         self.assertEqual((await self.spawn(projectTitle="aLPHA"))["projectId"], "p-alpha")
-
-    async def test_single_project_is_the_default(self):
-        FakeClient.projects = FakeClient.projects[:1]
-        self.assertEqual((await self.spawn())["projectId"], "p-alpha")
-
-    async def test_ambiguous_or_unknown_project_lists_choices(self):
-        for index, changes in enumerate(({}, {"projectTitle": "Gamma"}, {"projectId": "p-missing"})):
-            with self.assertRaises(ValueError) as caught:
-                await self.spawn(key=f"k{index}", **changes)
-            self.assertIn("Alpha (p-alpha)", str(caught.exception))
-        FakeClient.projects.append({"id": "p-dup", "title": "alpha", "workspaceRoot": "/srv/fixture/dup"})
-        with self.assertRaises(ValueError):
-            await self.spawn(key="dup", projectTitle="Alpha")
-        self.assertFalse(any(call[0] == "orchestration.launchThread" for call in FakeClient.calls))
-
-    async def test_legacy_binding_is_the_default_project_and_others_stay_reachable(self):
-        legacy = {"version": 2, "targets": [{"id": "box", "label": "Box", "origin": "https://t3.example.test", "environment_id": ENV, "kind": "remote",
-                                             "project_id": "p-beta", "project_root": "/srv/fixture/beta", "web_origin": None, "runtime_mode": "auto"}]}
-        (self.config / "targets.json").write_text(json.dumps(legacy))
-        self.assertEqual(load_targets(self.config)[0].project_id, "p-beta")
-        payload = await self.spawn()
-        self.assertEqual((payload["projectId"], payload["runtimeMode"]), ("p-beta", "auto"))
-        self.assertEqual((await self.spawn(key="k2", projectId="p-alpha"))["projectId"], "p-alpha")
-        listed = await self.engine.call("list_projects", {"target": "box"}, OWNER)
-        self.assertEqual([(row["id"], row["default"]) for row in listed["projects"]], [("p-alpha", False), ("p-beta", True)])
 
     async def test_remote_still_refuses_checkout_and_worktree(self):
         for changes in ({"checkout": "/tmp/x"}, {"workspace": "worktree"}):
@@ -97,6 +135,7 @@ class Projects(unittest.IsolatedAsyncioTestCase):
         FakeClient.projects.append({"id": "p-local", "title": "Repo", "workspaceRoot": str(checkout)})
         payload = await self.spawn(target="mac", checkout=str(checkout))
         self.assertEqual(payload["projectId"], "p-local")
+        self.assertEqual(self.result["project"]["resolvedBy"], "git")
 
     async def test_add_project_payload(self):
         result = await self.engine.call("add_project", {"target": "box", "requestKey": "add-gamma", "workspaceRoot": "/srv/fixture/gamma/"}, OWNER)

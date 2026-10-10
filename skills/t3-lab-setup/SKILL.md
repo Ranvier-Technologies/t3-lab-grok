@@ -83,7 +83,7 @@ Use `--kind local` only for a loopback origin on this same host. Add `--web-orig
 uv run --frozen python setup.py projects --target <TARGET_ID>
 ```
 
-One pairing per machine covers all of its projects: bots pick one per `spawn_thread` (`projectId` or `projectTitle`), see them with `list_projects`, and can register an existing folder with `add_project`. **No project** is T3's scratch project (root `~/.t3/scratch`): handy for checks; each thread there gets its own dated subfolder. Ids prefixed `mcp:` are projects created by an MCP client and work normally.
+One pairing per machine covers all of its projects: bots pick one per `spawn_thread` (`projectId` or `projectTitle`), see them with `list_projects`, and can register an existing folder with `add_project`. **No project** is T3's scratch project (root `~/.t3/scratch`): handy for checks; each thread there gets its own dated subfolder, and it is where a spawn that names no project runs (unless `bind --project-id` set a default). Ids prefixed `mcp:` are projects created by an MCP client and work normally.
 
 ```sh
 # optional: a default project for spawns that name none

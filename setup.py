@@ -70,7 +70,7 @@ async def run(args):
             raise ValueError("Unknown target. Pair it first, then list its projects.")
         projects = (await Client(target, credentials).shell()).get("projects", [])
         return {"target": target.id, "projects": [{"id": project.get("id"), "title": project.get("title"), "workspaceRoot": project.get("workspaceRoot"),
-                                                    "default": project.get("id") == target.project_id} for project in projects]}
+                                                    "default": project.get("id") == target.default_project_id} for project in projects]}
     if args.command == "inspect":
         origin = origin_url(args.origin)
         async with httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=10) as session:
@@ -125,14 +125,14 @@ async def run(args):
             project = next((project for project in projects if project["id"] == args.project_id), None)
             if project is None:
                 raise ValueError("That project id is not in this environment; run `projects`. Nothing was changed.")
-            changes.update(project_id=project["id"], project_root=project["workspaceRoot"])
+            changes.update(default_project_id=project["id"])
         if args.runtime_mode:
             changes["runtime_mode"] = args.runtime_mode
         if not changes:
             raise ValueError("Pass --project-id and/or --runtime-mode. Nothing was changed.")
         target = Target(**{**target.__dict__, **changes})
         save_target(args.config_dir, target)
-        return {"bound": True, "target": target.id, "defaultProjectId": target.project_id, "runtimeMode": target.runtime_mode}
+        return {"bound": True, "target": target.id, "defaultProjectId": target.default_project_id, "runtimeMode": target.runtime_mode}
     results = []
     for target in load_targets(args.config_dir):
         row = {"id": target.id, "label": target.label, "environmentId": target.environment_id, "origin": target.origin, "kind": target.kind}

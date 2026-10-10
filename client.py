@@ -48,10 +48,11 @@ class Target:
     origin: str
     environment_id: str
     kind: str = "local"
-    project_id: str | None = None  # optional default project (legacy 0.3.x binding)
+    project_id: str | None = None  # legacy 0.3.x binding; kept for reference, no longer a spawn default
     project_root: str | None = None
     web_origin: str | None = None
     runtime_mode: str = "approval-required"
+    default_project_id: str | None = None  # set only by `setup.py bind --project-id`
 
     def __post_init__(self):
         origin_url(self.origin)
@@ -205,7 +206,7 @@ class Client:
         return projection
 
     async def rpc(self, method, payload):
-        if method not in {"server.getConfig", "orchestration.launchThread", "orchestration.dispatchCommand", "projects.mutate"}:
+        if method not in {"server.getConfig", "orchestration.launchThread", "orchestration.dispatchCommand", "projects.mutate", "projects.ensureScratch"}:
             raise ValueError("This facade does not expose that RPC method.")
         ticket = await self.request("POST", "/api/auth/websocket-ticket")
         uri = self.target.origin.replace("https://", "wss://", 1).replace("http://", "ws://", 1)

@@ -41,6 +41,9 @@ class FakeClient:
 
     async def rpc(self, name, payload):
         self.calls.append((name, copy.deepcopy(payload)))
+        if name == "projects.ensureScratch":
+            self.projects.append({"id": "scratch-fixture", "title": "No project", "workspaceRoot": "/home/box/.t3/scratch"})
+            return {"projectId": "scratch-fixture"}
         if self.lose_before_commit:
             raise MutationUnknown("Synthetic connection loss")
         thread_id = payload["threadId"]
@@ -79,8 +82,45 @@ class Operations(unittest.IsolatedAsyncioTestCase):
         self.engine = Engine(self.config, self.state)
 
     async def launch(self, owner=OWNER, **changed):
-        return await self.engine.call("spawn_thread", {**self.arguments, **changed}, owner)
+        result = await self.engine.call("spawn_thread", {**self.arguments, **changed}, owner)
+        self.engine.drivers.clear()  # the inline handoff digest warms the driver cache; driver tests start cold
+        return result
 
+
+    async def test_spawn_returns_the_handoff_digest_and_resolved_project(self):
+        launched = await self.launch()
+        self.assertEqual(launched["project"], {"id": "p1", "title": "Repo", "resolvedBy": "git"})
+        self.assertNotIn("warning", launched)
+        status = await self.engine.call("delegation_status", {"threadIds": [launched["threadId"]], "moment": "handoff"}, OWNER)
+        self.assertEqual(launched["digest"], status["digest"])
+        self.assertIn("**#1 ·", launched["digest"])
+        replay = await self.launch()
+        self.assertEqual((replay["threadId"], replay["project"]), (launched["threadId"], launched["project"]))
+
+    async def test_status_spans_several_environments_with_one_section_each(self):
+        other_env = "00000000-0000-4000-8000-000000000000"
+        save_target(self.config, Target("lab", "Lab", "https://lab.example.test", other_env, kind="remote"))
+        FakeClient.projects.append({"id": "scratch-fixture", "title": "No project", "workspaceRoot": "/srv/fixture/.t3/scratch"})
+        first = await self.launch()
+        second = await self.engine.call("spawn_thread", {"target": "lab", "requestKey": "lab-1", "workspace": "shared", "prompt": "OK",
+                                                         "modelSelection": {"instanceId": "claudeAgent", "model": "test-model"}}, OWNER)
+        status = await self.engine.call("delegation_status", {"threadIds": [first["threadId"], second["threadId"]], "moment": "check-in"}, OWNER)
+        sections = status["digest"].split("\n\n")
+        self.assertEqual(len(sections), 2)
+        self.assertIn("· mac ·", sections[0])
+        self.assertIn("· lab ·", sections[1])
+        self.assertEqual([row["n"] for row in status["rows"]], [1, 2])
+
+    async def test_read_keeps_the_head_and_pages_with_offset(self):
+        launched = await self.launch()
+        text = "".join(chr(97 + index % 26) for index in range(250))
+        FakeClient.projections[launched["threadId"]]["messages"][-1]["text"] = text
+        head = await self.engine.call("read_thread", {"threadId": launched["threadId"], "maxChars": 100}, OWNER)
+        self.assertEqual((head["lastAssistantMessage"], head["truncated"], head["totalChars"], head["offset"]), (text[:100], True, 250, 0))
+        tail = await self.engine.call("read_thread", {"threadId": launched["threadId"], "maxChars": 100, "offset": 200}, OWNER)
+        self.assertEqual((tail["lastAssistantMessage"], tail["truncated"]), (text[200:], True))
+        whole = await self.engine.call("read_thread", {"threadId": launched["threadId"], "maxChars": 1000}, OWNER)
+        self.assertEqual((whole["lastAssistantMessage"], whole["truncated"]), (text, False))
     async def test_repeated_launch_returns_saved_thread_without_redispatch(self):
         first = await self.launch()
         second = await Engine(self.config, self.state).call("spawn_thread", self.arguments, OWNER)
@@ -126,7 +166,7 @@ class Operations(unittest.IsolatedAsyncioTestCase):
 
     async def test_validation_rejects_foreign_checkout_and_unknown_model_before_mutation(self):
         other = repo(self.root / "other")
-        for changes in ({"checkout": str(other)}, {"modelSelection": {"instanceId": "claudeAgent", "model": "not-a-model"}}):
+        for changes in ({"checkout": str(other), "projectId": "p1"}, {"modelSelection": {"instanceId": "claudeAgent", "model": "not-a-model"}}):
             with self.assertRaises(ValueError):
                 await self.launch(**changes)
         self.assertFalse(any(call[0] == "orchestration.launchThread" for call in FakeClient.calls))
@@ -143,9 +183,10 @@ class Operations(unittest.IsolatedAsyncioTestCase):
         FakeClient.projects = []
         await self.engine.call("list_providers", {}, OWNER)
         self.assertEqual(FakeClient.calls, [])
-        with self.assertRaises(ValueError):
-            await self.launch()
-        self.assertEqual(FakeClient.calls, [])
+        launched = await self.launch()
+        # With no matching project, a spawn asks T3 for its scratch project instead of creating one.
+        self.assertEqual([call[0] for call in FakeClient.calls][:2], ["projects.ensureScratch", "orchestration.launchThread"])
+        self.assertEqual((launched["project"]["resolvedBy"], launched["project"]["id"]), ("scratch", None))
 
     async def test_await_budget_includes_a_slow_projection_read(self):
         launch = await self.launch()

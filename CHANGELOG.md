@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1
+
+Demo feedback.
+
+- **Scratch by default.** A `spawn_thread` that names no project and has no local Git match runs in T3's scratch **No project** (found in the snapshot, or requested with `projects.ensureScratch`), not in "the only project" or a migrated binding. A default project applies only when set explicitly with `setup.py bind --project-id` (stored as `default_project_id`); 0.3.x/0.4.0 `project_id` bindings are kept but no longer act as defaults (a scratch binding stays scratch either way).
+- **Spawn response** names the resolved project: `project: {id|null, title, resolvedBy: projectId|projectTitle|git|default|scratch}`, plus a `warning` on a default or scratch fallback, and the one-thread handoff `digest` so no second call is needed.
+- **`delegation_status` across targets:** one call may mix environments; the digest has one section per environment.
+- **`read_thread` / `await_thread` keep the head** of long replies, with `truncated`, `totalChars`, `offset`, and a new optional `offset` argument to page. `maxChars` limits unchanged.
+
 ## 0.4.0
 
 Many projects per target, and bots can add projects.

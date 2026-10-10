@@ -54,31 +54,42 @@ class Engine:
     @staticmethod
     def project_row(project, target):
         return {"id": project.get("id"), "title": project.get("title"), "workspaceRoot": project.get("workspaceRoot"),
-                "default": project.get("id") == target.project_id}
+                "default": project.get("id") == target.default_project_id}
 
-    @staticmethod
-    def choose_project(projects, target, project_id=None, title=None, checkout=None):
-        """Pick a project from the live shell: explicit id or title, then the target default, then (local) the
-        checkout's Git identity or (remote) the only project. Anything else is a clear error listing the choices."""
+    async def choose_project(self, client, projects, target, project_id=None, title=None, checkout=None):
+        """Return (project, resolvedBy). Order: explicit projectId/projectTitle, a local checkout's Git match, the
+        default set with `setup.py bind --project-id`, then T3's scratch "No project". Never "the only project"."""
         choices = "; ".join(f"{project.get('title')} ({project.get('id')})" for project in projects) or "none"
         if project_id is not None or title is not None:
             matched = [project for project in projects
                        if (project_id is None or project.get("id") == project_id)
                        and (title is None or (project.get("title") or "").casefold() == title.strip().casefold())]
             if len(matched) == 1:
-                return matched[0]
+                return matched[0], "projectId" if project_id is not None else "projectTitle"
             problem = "Several projects match that title" if matched else "No project in this environment matches that id/title"
             raise ValueError(f"{problem}. Pass a projectId from: {choices}. No thread was launched.")
-        if target.project_id:
-            default = next((project for project in projects if project.get("id") == target.project_id), None)
-            if default is not None:
-                return default
         if checkout:
-            # A local checkout keeps its Git-identity match, so a thread never runs a checkout under another project.
-            return resolve_project(projects, checkout)
-        if len(projects) == 1:
-            return projects[0]
-        raise ValueError(f"Choose a project with projectId or projectTitle. Available: {choices}. No thread was launched.")
+            try:
+                return resolve_project(projects, checkout), "git"
+            except ValueError:
+                pass
+        if target.default_project_id:
+            default = next((project for project in projects if project.get("id") == target.default_project_id), None)
+            if default is not None:
+                return default, "scratch" if is_scratch_root(default.get("workspaceRoot")) else "default"
+        scratch = next((project for project in projects if is_scratch_root(project.get("workspaceRoot"))), None)
+        if scratch is None:
+            try:
+                created = await client.rpc("projects.ensureScratch", {})
+            except MutationUnknown:
+                raise MutationUnknown("T3 did not confirm its scratch project, so no thread was launched. Check list_projects for "
+                                      "\"No project\", then retry with projectId, or retry the same requestKey.") from None
+            scratch_id = (created or {}).get("projectId")
+            scratch = next((project for project in (await client.shell()).get("projects", []) if project.get("id") == scratch_id),
+                           {"id": scratch_id, "title": "No project", "workspaceRoot": None})
+            if not scratch.get("id"):
+                raise ValueError("T3 did not provide its scratch project. Pass projectId or projectTitle; no thread was launched.")
+        return scratch, "scratch"
 
     async def submit(self, journal, operation):
         target = self.target(operation["target"], operation["environment"])
@@ -189,6 +200,24 @@ class Engine:
             project = found
         return {"created": project.get("id") == payload["projectId"], "target": target.id, "project": self.project_row(project, target)}
 
+    async def spawned(self, journal, operation, result, owner):
+        """Add the resolved project, a fallback warning, and the one-thread handoff digest to a spawn result."""
+        project = dict((operation.get("request") or {}).get("_project") or {"id": operation["intent"]["projectId"], "title": None, "resolvedBy": None})
+        if project.get("resolvedBy") == "scratch":
+            project["id"] = None
+        result["project"] = project
+        if project.get("resolvedBy") in {"default", "scratch"}:
+            result["warning"] = ("No projectId/projectTitle was given, so the thread runs in T3's scratch \"No project\" folder. "
+                                 "Pass projectId or projectTitle (see list_projects) to run in a project.") if project["resolvedBy"] == "scratch" else (
+                                 f"No projectId/projectTitle was given, so the target's default project ({project.get('title')}) was used.")
+        if result.get("operationState") == "accepted":
+            try:
+                status = await self.call("delegation_status", {"threadIds": [result["threadId"]], "moment": "handoff"}, owner)
+                result["digest"] = status["digest"]
+            except Exception:  # the digest is a convenience; the launch result stands without it
+                pass
+        return result
+
     async def call(self, name, arguments, owner):
         if name == "list_targets":
             return {"targets": [{"id": target.id, "label": target.label, "origin": target.origin, "environmentId": target.environment_id,
@@ -210,29 +239,34 @@ class Engine:
             key = arguments["requestKey"]
             previous = journal.find(key)
             if previous:
-                if previous["request"] != arguments or previous["kind"] != ("launch" if name == "spawn_thread" else "send"):
+                if {key: value for key, value in previous["request"].items() if not key.startswith("_")} != arguments or previous["kind"] != ("launch" if name == "spawn_thread" else "send"):
                     raise ValueError("This requestKey records different arguments. Recover the original or use a new key for a new operation; nothing was sent.")
-                return await self.submit(journal, previous)
+                result = await self.submit(journal, previous)
+                return await self.spawned(journal, previous, result, owner) if name == "spawn_thread" else result
         if name == "spawn_thread":
             target = self.target(arguments.get("target"))
             client = Client(target, self.credentials)
             shell = await client.shell()
             if target.kind == "local":
                 checkout = arguments.get("checkout")
-                if not checkout:
-                    raise ValueError("Pass this chat's actual absolute checkout; the plugin cache is not its working directory.")
-                if not Path(checkout).is_absolute() or not Path(checkout).is_dir():
+                if checkout and (not Path(checkout).is_absolute() or not Path(checkout).is_dir()):
                     raise ValueError("checkout must be an existing absolute directory on this machine. No thread was launched.")
                 projects = shell.get("projects", [])
-                project = self.choose_project(projects, target, arguments.get("projectId"), arguments.get("projectTitle"), checkout)
-                # The checkout must belong to the chosen project (same Git repository), however it was chosen.
-                resolve_project(projects, checkout, project["id"])
-                strategy = {"type": "existing_worktree", "worktreePath": str(Path(checkout).resolve())} if arguments["workspace"] == "shared" else {
-                    "type": "worktree", "baseRef": git_value(checkout, "rev-parse", "HEAD"), "startFromOrigin": False}
+                project, resolved = await self.choose_project(client, projects, target, arguments.get("projectId"), arguments.get("projectTitle"), checkout)
+                if resolved == "scratch":
+                    # Scratch gives each thread its own folder; the chat's checkout is not used.
+                    strategy = {"type": "root"}
+                else:
+                    if not checkout:
+                        raise ValueError("Pass this chat's actual absolute checkout for a local project; the plugin cache is not its working directory.")
+                    # The checkout must belong to the chosen project (same Git repository), however it was chosen.
+                    resolve_project(projects, checkout, project["id"])
+                    strategy = {"type": "existing_worktree", "worktreePath": str(Path(checkout).resolve())} if arguments["workspace"] == "shared" else {
+                        "type": "worktree", "baseRef": git_value(checkout, "rev-parse", "HEAD"), "startFromOrigin": False}
             else:
                 if arguments.get("checkout") is not None or arguments["workspace"] != "shared":
                     raise ValueError("Remote targets run in the project's root with workspace shared. A local checkout or a remote worktree is not accepted.")
-                project = self.choose_project(shell.get("projects", []), target, arguments.get("projectId"), arguments.get("projectTitle"))
+                project, resolved = await self.choose_project(client, shell.get("projects", []), target, arguments.get("projectId"), arguments.get("projectTitle"))
                 strategy = {"type": "root"}
             model = arguments["modelSelection"]
             provider = next((provider for provider in await client.providers() if provider["instanceId"] == model["instanceId"]), None)
@@ -242,8 +276,9 @@ class Engine:
             intent = {"projectId": project["id"], "title": arguments.get("title") or "Task from the parent chat", "modelSelection": model,
                       "runtimeMode": mode, "interactionMode": "default", "workspaceStrategy": strategy, "creationSource": "mcp",
                       "initialMessage": {"text": arguments["prompt"], "attachments": []}}
-            operation = journal.prepare(arguments["requestKey"], "launch", target.id, target.environment_id, intent, request=arguments)
-            return await self.submit(journal, operation)
+            record = {**arguments, "_project": {"id": project.get("id"), "title": project.get("title"), "resolvedBy": resolved}}
+            operation = journal.prepare(arguments["requestKey"], "launch", target.id, target.environment_id, intent, request=record)
+            return await self.spawned(journal, operation, await self.submit(journal, operation), owner)
         if name == "send_to_thread":
             operation = journal.latest(arguments["threadId"])
             current = await self.read(journal, arguments["threadId"])
@@ -263,17 +298,21 @@ class Engine:
                     return {"threadId": arguments["threadId"], "status": "unknown", "settled": False, "lastAssistantMessage": None,
                             "lastError": None, "timedOut": True, "instruction": "The wait budget ended, not the child. Await the same ID again."}
                 if data["settled"] or time.monotonic() >= deadline:
+                    # Keep the head; callers page with offset. truncated/totalChars describe the main reply.
+                    size, offset = arguments.get("maxChars", 4000), arguments.get("offset", 0)
+                    main = "lastAssistantMessage" if data.get("lastAssistantMessage") else "latestAssistantText"
                     for key in ("lastAssistantMessage", "latestAssistantText"):
                         if data.get(key):
-                            data[key] = data[key][-arguments.get("maxChars", 4000):]
+                            whole = data[key]
+                            data[key] = whole[offset:offset + size]
+                            if key == main:
+                                data.update(totalChars=len(whole), offset=offset, truncated=offset > 0 or offset + size < len(whole))
                     return data
                 await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
         if name == "delegation_status":
             moment = canonical_moment(arguments["moment"])
             selected = arguments["threadIds"]
-            records = [journal.latest(thread) for thread in selected]
-            if len({row["environment"] for row in records}) != 1:
-                raise ValueError("Keep one delegation status within one environment.")
+            environments = {thread: journal.latest(thread)["environment"] for thread in selected}
             launch_order = {thread: journal.launch(thread)["seq"] for thread in selected}
             ordered = sorted(selected, key=launch_order.get)
             rows = await asyncio.gather(*(self.read(journal, thread) for thread in ordered))
@@ -295,7 +334,13 @@ class Engine:
             observation = min((row["observedAt"] for row in rows if row["observedAt"] is not None), default=None)
             for row in rows:
                 row["signature"] = row_signature(row)
-            content = {"rows": rows, "observedAt": observation, "digest": digest(rows, moment, observation),
+            # One digest section per environment, in launch order of each environment's first thread.
+            sections = {}
+            for row in rows:
+                sections.setdefault(environments[row["threadId"]], []).append(row)
+            text = "\n\n".join(digest(group, moment, min((row["observedAt"] for row in group if row["observedAt"] is not None), default=None))
+                                for group in sections.values())
+            content = {"rows": rows, "observedAt": observation, "digest": text,
                        "signature": ";".join(row["signature"] for row in rows)}
             if waited is not None:
                 content["wait"] = waited

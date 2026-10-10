@@ -31,7 +31,7 @@ Status: prepared for public/community use; **not published yet** to the Cursor M
 
 1. Install the code (Cursor local plugin or any checkout, below).
 2. `uv run --frozen python setup.py init` — creates your private owner UUID.
-3. `inspect` → `pair` → `projects` (below). `bind` is optional: it only sets a default project.
+3. `inspect` → `pair` → `projects` (below). `bind` is optional: it only sets a default project (without one, unnamed spawns go to T3's scratch **No project**).
 4. Register or reload the MCP server, then `list_targets` / `list_providers`.
 
 A step-by-step, check-by-check version that an agent can follow on its own is in [`skills/t3-lab-setup/SKILL.md`](skills/t3-lab-setup/SKILL.md).
@@ -113,7 +113,7 @@ uv run --frozen python setup.py bind --target remote-dev --project-id PROJECT_ID
 uv run --frozen python setup.py status --probe
 ```
 
-Configs from 0.3.x keep working: their bound project becomes the default.
+Configs from 0.3.x/0.4.0 keep working. Their old binding is no longer a spawn default; set one explicitly with `bind --project-id` if you want it.
 
 For Nightly on the same machine use `--kind local` with a loopback origin (`http://127.0.0.1:3773`) and optionally `--web-origin http://localhost:3773`; local launches pass the chat's own checkout.
 
@@ -128,13 +128,13 @@ Files under `~/.config/t3-lab/v2` (override with `T3_LAB_V2_CONFIG_DIR`; `script
 | `list_projects` | Every project in the target's environment: id, title, workspaceRoot, default flag. |
 | `add_project` | Register an existing folder on the target as a T3 project (idempotent; returns the existing project if the root is already registered). |
 | `list_threads` | Operations this chat owns. |
-| `spawn_thread` | Launch a thread in any project (`projectId` or `projectTitle`). |
+| `spawn_thread` | Launch a thread in any project (`projectId` or `projectTitle`); returns the resolved project and the handoff digest. |
 | `send_to_thread` | Next round on a settled owned thread. |
-| `read_thread` / `await_thread` | Current state and reply. |
-| `delegation_status` | Markdown digest for owned threads. |
+| `read_thread` / `await_thread` | Current state and reply (head first; `truncated`, `totalChars`, page with `offset`). |
+| `delegation_status` | Markdown digest for owned threads, across targets (one section per environment). |
 | `show_delegation` | MCP Apps card plus digest. |
 
-Project choice for `spawn_thread`: `projectId` or `projectTitle` (case-insensitive) first; otherwise the target's default project; otherwise, for a local target, the project matching the checkout's Git repository, and for a remote target the only project. Anything else returns an error listing the projects.
+Project choice for `spawn_thread`: `projectId` or `projectTitle` (case-insensitive) first; otherwise, for a local target, the project matching the checkout's Git repository; otherwise the default set with `setup.py bind --project-id`; otherwise T3's scratch **No project** (each thread gets its own folder). The response carries `project: {id, title, resolvedBy}` (`id` is null for scratch; `resolvedBy` is `projectId`, `projectTitle`, `git`, `default` or `scratch`), a `warning` when it fell back to a default or scratch, and `digest`: the same handoff Markdown `delegation_status` would return, ready to paste.
 
 ## Runtime mode and remote targets
 
