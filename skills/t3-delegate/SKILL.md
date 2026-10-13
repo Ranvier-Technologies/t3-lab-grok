@@ -2,7 +2,7 @@
 name: t3-delegate
 description: >-
   Use when spawning, awaiting, or following up on a T3 Code Nightly thread from
-  a parent chat (Cursor Agent, Grok Bot, or Codex): pick target and
+  a parent chat (Cursor Agent, Grok Bot): pick target and
   project, recover by threadId/requestKey, and report settlement without
   moving the parent conversation into T3.
 ---
@@ -14,7 +14,7 @@ Do not migrate servers, extract provider credentials, or invent a native T3 pare
 
 `Delegation = { target, provider, model, project, runtimeMode, requestKey, threadId, settlement }`
 
-Ownership: Codex may supply `_meta.threadId`. Cursor Agent / Grok Bot use the `T3_LAB_OWNER` environment variable (Cursor Plugin variable, set in Plugins → Configure; `mcp.json` passes `${T3_LAB_OWNER}`). **Generate your own owner UUID** for that install (or run `setup.py init`, whose private owner file is the fallback); do not invent a new UUID per call. Setup lives in `skills/t3-lab-setup`.
+Ownership: Hosts that pass `_meta.threadId` use it when it is a valid UUID. Cursor Agent / Grok Bot use the `T3_LAB_OWNER` environment variable (Cursor Plugin variable, set in Plugins → Configure; `mcp.json` passes `${T3_LAB_OWNER}`). **Generate your own owner UUID** for that install (or run `setup.py init`, whose private owner file is the fallback); do not invent a new UUID per call. Setup lives in `skills/t3-lab-setup`.
 
 ## Host topology (this host vs remote)
 

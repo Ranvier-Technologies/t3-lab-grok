@@ -1,6 +1,6 @@
 # t3-lab-grok
 
-**Parent chat → T3 Nightly orchestration.** A Cursor plugin / MCP facade that keeps your conversation in Cursor Agent, Grok Bot, or Codex while launching durable work into official [T3 Code](https://t3.gg) Nightly environments through the protocol-2 client APIs.
+**Parent chat → T3 Nightly orchestration.** A Cursor plugin / MCP facade that keeps your conversation in Cursor Agent or Grok Bot while launching durable work into official [T3 Code](https://t3.gg) Nightly environments through the protocol-2 client APIs.
 
 This is a **protocol facade** (external parent → T3). It is **not** an official T3 Lab product, and it is **not** a fork of `pingdotgg/t3code`. Logo attribution for `assets/t3-code.png` lives in `assets/T3-LICENSE.txt` (MIT, T3 Tools Inc.). The plugin code is MIT — see root `LICENSE`.
 
@@ -9,8 +9,8 @@ Status: prepared for public/community use; **not published yet** to the Cursor M
 ```
 ┌─────────────────────┐     MCP stdio      ┌──────────────────────┐
 │ Parent chat         │ ─────────────────► │ This plugin          │
-│ (Cursor / Grok Bot  │   spawn / await    │ (t3-lab-grok)        │
-│  / Codex)           │ ◄───────────────── │ journal + tools      │
+│ (Cursor / Grok Bot) │   spawn / await    │ (t3-lab-grok)        │
+│                     │ ◄───────────────── │ journal + tools      │
 └─────────────────────┘                    └──────────┬───────────┘
                                                       │ protocol-2
                                                       ▼
@@ -24,7 +24,7 @@ Status: prepared for public/community use; **not published yet** to the Cursor M
 
 - **T3 Code Nightly with orchestration protocol 2.** Tested with `v0.0.46-nightly.20261004` and later (verified against `20261004.2648` and `20261009.2873`). The plugin needs `/.well-known/t3/environment` reporting `orchestrationProtocolVersion: 2`, the `/oauth/token` environment-bootstrap token exchange, `/api/orchestration/shell`, `/api/orchestration/threads/<id>`, `/api/auth/websocket-ticket`, and the `/ws?orchestrationProtocol=2` socket. Servers that report protocol 1 are refused before any pairing or operation is sent.
 - **Python ≥ 3.12** and **[uv](https://github.com/astral-sh/uv)** on `PATH`.
-- A host that loads a local Cursor Plugin or a stdio MCP server (Cursor, Grok Bot, Codex, …).
+- A host that loads a local Cursor Plugin or a stdio MCP server (Cursor, Grok Bot, …).
 - A way for that host to reach Nightly: `http://127.0.0.1:<port>` on the same machine, or an **HTTPS** origin elsewhere (Tailscale HTTPS, a reverse proxy, or a tunnel). Plain `http://` is refused off loopback.
 
 ## Quick start
@@ -68,7 +68,7 @@ Then ask your bot to follow `skills/t3-lab-setup`. In short:
 
 Journal entries are partitioned by an owner UUID, so one install cannot read another's operations. Resolution order (fail closed):
 
-1. `_meta.threadId` when it is a valid UUID (Codex hosts)
+1. `_meta.threadId` when it is a valid UUID (hosts that pass `_meta.threadId`)
 2. optional tool argument `owner` (UUID)
 3. env `T3_LAB_OWNER` (UUID) — in Cursor, set it in **Plugins → Configure**; `mcp.json` passes `${T3_LAB_OWNER}`
 4. the private owner file `~/.config/t3-lab/v2/owner` written by `setup.py init`

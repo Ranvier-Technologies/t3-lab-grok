@@ -1,7 +1,7 @@
 {
   "name": "t3-lab-grok",
-  "version": "0.4.3",
-  "description": "Delegate from a parent chat (Cursor Agent, Grok Bot, Codex) to official T3 Nightly environments with durable operations, verified checkouts and text-first status.",
+  "version": "0.4.4",
+  "description": "Delegate from a parent chat (Cursor Agent, Grok Bot) to official T3 Nightly environments with durable operations, verified checkouts and text-first status.",
   "author": {
     "name": "Bastian"
   },
@@ -31,7 +31,7 @@
       "interface": {
         "displayName": "T3 Lab Grok",
         "shortDescription": "T3 threads from parent chat",
-        "longDescription": "Keep your parent chat (Cursor Agent, Grok Bot, or Codex) as the main conversation. Launch work through the official T3 client APIs, recover the same operation after a cut, and open its exact T3 thread to intervene. No automatic idle-chat wake. Codex may supply _meta.threadId; other hosts use T3_LAB_OWNER. Prepared for community use; not yet listed on the Cursor Marketplace.",
+        "longDescription": "Keep your parent chat (Cursor Agent, Grok Bot) as the main conversation. Launch work through the official T3 client APIs, recover the same operation after a cut, and open its exact T3 thread to intervene. No automatic idle-chat wake. Prepared for community use; not yet listed on the Cursor Marketplace.",
         "developerName": "Bastian",
         "category": "Productivity",
         "defaultPrompt": "Ask Claude and Grok for a second opinion on a file, in parallel.",

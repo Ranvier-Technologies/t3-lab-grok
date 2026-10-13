@@ -86,7 +86,7 @@ def build_server(config_root=None, state_root=None):
     config_root = config_root or os.environ.get("T3_LAB_V2_CONFIG_DIR") or Path.home() / ".config/t3-lab/v2"
     state_root = state_root or os.environ.get("T3_LAB_V2_STATE_DIR") or Path.home() / ".local/state/t3-lab-v2/chats"
     engine = Engine(config_root, state_root)
-    app = Server("t3-lab-grok", version="0.4.3")
+    app = Server("t3-lab-grok", version="0.4.4")
     definitions = {name: {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
                    for name, (properties, required) in SCHEMAS.items()}
 

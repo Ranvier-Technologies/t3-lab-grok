@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4
+
+Docs: drop Codex as a claimed host.
+
+- User-facing descriptions now list Cursor Agent and Grok Bot only (plugin.json, README, t3-delegate skill). `_meta.threadId` support remains for hosts that pass it; Codex is still a valid T3 *provider*.
+- Marketplace “not yet listed” note kept (still accurate).
+
 ## 0.4.3
 
 Thread messaging: steer and queue.
