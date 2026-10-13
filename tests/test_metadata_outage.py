@@ -69,7 +69,6 @@ class MetadataOutage(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(observed["lastAssistantMessage"])
             self.assertIsNone(observed["latestAssistantText"])
             self.assertIsNone(observed["observedAt"])
-            self.assertFalse(observed["canContinue"])
             notice = {"threadIds": [recorded["thread_id"]], "moment": "update"}
             first = await engine.call("delegation_status", notice, OWNER)
             second = await engine.call("delegation_status", notice, OWNER)

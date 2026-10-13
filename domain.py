@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 TERMINAL = {"completed", "failed", "cancelled", "interrupted", "rolled_back"}
 ACTIVE = {"pending", "queued", "preparing", "starting", "running", "waiting"}
-LABELS = {"starting": "Starting", "running": "Working", "background": "Turn done, still working",
+LABELS = {"queued": "Queued", "starting": "Starting", "running": "Working", "background": "Turn done, still working",
           "completed": "Turn done", "failed": "Failed", "stopped": "Stopped", "unknown": "No data",
           "waiting_for_input": "Waiting for your reply", "waiting_for_approval": "Waiting for your approval"}
 
@@ -76,18 +76,41 @@ def ask(request, items):
     return data
 
 
+def message_dispatch_mode(mode, projection):
+    if mode == "queue":
+        return {"type": "queue_after_active"}
+    if mode != "steer":
+        raise ValueError("mode must be steer or queue. No message was sent.")
+    active = [run for run in projection.get("runs", []) if run.get("status") in {"preparing", "starting", "running", "waiting"}]
+    run = max(active, key=lambda item: item.get("ordinal", 0), default=None)
+    if run is None:
+        return {"type": "start_immediately"}
+    if run.get("status") != "running":
+        raise ValueError("The active turn is not ready for steering. Wait or explicitly use mode queue; no message was sent.")
+    nodes = {node["id"] for node in projection.get("nodes", []) if node.get("runId") == run["id"]}
+    if any(request.get("nodeId") in nodes and request.get("status") == "pending" for request in projection.get("runtimeRequests", [])):
+        raise ValueError("Resolve the pending approval or input in T3. Steering cannot answer it; no message was sent.")
+    return {"type": "steer_active", "targetRunId": run["id"]}
+
+
 def observe(operation, projection):
     data = {"threadId": operation["thread_id"], "status": "unknown", "settled": False,
             "lastAssistantMessage": None, "latestAssistantText": None, "lastError": None, "round": operation.get("round", 1),
-            "operationState": operation["state"], "runId": None, "deliveryConfirmed": False}
+            "operationState": operation["state"], "runId": None, "messageId": operation["message_id"], "deliveryConfirmed": False}
     if projection.get("thread", {}).get("id") != operation["thread_id"]:
         raise ValueError("The server returned a different thread; its result was not used.")
     runs = projection.get("runs", [])
+    message = next((message for message in projection.get("messages", [])
+                    if message.get("id") == operation["message_id"] and message.get("role") == "user"), None)
     run = next((run for run in runs if run.get("userMessageId") == operation["message_id"]), None)
+    if message is not None:
+        run = next((run for run in runs if run["id"] == message.get("runId")), run)
     if run is None:
         return data
-    run = max((candidate for candidate in runs if candidate.get("ordinal", 0) >= run.get("ordinal", 0)),
-              key=lambda candidate: candidate.get("ordinal", 0))
+    dispatch = (operation.get("intent") or {}).get("dispatchMode", {}).get("type")
+    if dispatch not in {"steer_active", "queue_after_active"}:
+        run = max((candidate for candidate in runs if candidate.get("ordinal", 0) >= run.get("ordinal", 0)),
+                  key=lambda candidate: candidate.get("ordinal", 0))
     data.update(runId=run["id"], deliveryConfirmed=True)
     run_id = run["id"]
     messages = [message for message in projection.get("messages", []) if message.get("role") == "assistant" and message.get("runId") == run_id]
@@ -98,6 +121,10 @@ def observe(operation, projection):
     pending = [request for request in projection.get("runtimeRequests", [])
                if request.get("nodeId") in nodes and request.get("status") == "pending"]
     status = run.get("status")
+    if status == "queued" and dispatch == "queue_after_active":
+        data.update(status="queued", queuePosition=run.get("queuePosition"), queueHeld=run.get("queueHeld", False))
+        data["notice"] = "Queue held in T3. Resume it in T3 when ready." if data["queueHeld"] else "Message queued in T3; it has not started."
+        return data
     live_children = any(child.get("runId") == run_id and child.get("status") in ACTIVE
                         for child in projection.get("subagents", []))
     if pending:
@@ -226,7 +253,7 @@ def inline_code(value):
     return fence + " " + text + " " + fence
 
 
-CARD_STATUS = {"starting": "queued", "unknown": "queued", "running": "running", "background": "running",
+CARD_STATUS = {"queued": "queued", "starting": "queued", "unknown": "queued", "running": "running", "background": "running",
                "waiting_for_input": "waiting", "waiting_for_approval": "waiting", "completed": "done",
                "stopped": "stopped", "failed": "error"}
 
@@ -263,7 +290,8 @@ def link_line(row):
 def row_signature(row):
     """What the card waits on: status, the pending ask, the error, and the round."""
     ask = row.get("ask") if isinstance(row.get("ask"), dict) else {}
-    fields = [row.get("status"), ask.get("kind"), ask.get("text"), row.get("lastError"), row.get("round")]
+    fields = [row.get("status"), ask.get("kind"), ask.get("text"), row.get("lastError"), row.get("round"),
+              row.get("queuePosition"), row.get("queueHeld"), row.get("queuedMessages")]
     # Fixed-length and unambiguous, so it always fits the `since` schema whatever the error text.
     return hashlib.sha256(json.dumps(fields, ensure_ascii=False, default=str).encode()).hexdigest()[:32]
 
@@ -287,7 +315,7 @@ def delegation_card(row, phase, digest_text):
         card["webUrl"] = web
     if app:
         card["appUrl"] = app
-    card.update({key: row[key] for key in ("driver", "model", "startedAt", "completedAt", "excerpt") if isinstance(row.get(key), str) and row[key]})
+    card.update({key: row[key] for key in ("driver", "model", "startedAt", "completedAt", "excerpt", "notice") if isinstance(row.get(key), str) and row[key]})
     if isinstance(row.get("ask"), dict):
         card["ask"] = row["ask"]
     card["signature"] = row_signature(row)

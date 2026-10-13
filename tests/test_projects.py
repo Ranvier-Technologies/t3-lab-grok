@@ -102,7 +102,7 @@ class Projects(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_bind_default_is_used_with_a_warning(self):
         self.write_target(default_project_id="p-beta", runtime_mode="auto")
         payload = await self.spawn()
-        self.assertEqual((payload["projectId"], payload["runtimeMode"]), ("p-beta", "auto"))
+        self.assertEqual((payload["projectId"], payload["runtimeMode"]), ("p-beta", "full-access"))
         self.assertEqual(self.result["project"]["resolvedBy"], "default")
         self.assertIn("Beta", self.result["warning"])
         listed = await self.engine.call("list_projects", {"target": "box"}, OWNER)

@@ -129,7 +129,7 @@ Files under `~/.config/t3-lab/v2` (override with `T3_LAB_V2_CONFIG_DIR`; `script
 | `add_project` | Register an existing folder on the target as a T3 project (idempotent; returns the existing project if the root is already registered). |
 | `list_threads` | Operations this chat owns. |
 | `spawn_thread` | Launch a thread in any project (`projectId` or `projectTitle`); returns the resolved project and the handoff digest. |
-| `send_to_thread` | Next round on a settled owned thread. |
+| `send_to_thread` | Message an owned thread: `mode` `steer` (default) or `queue`. |
 | `read_thread` / `await_thread` | Current state and reply (head first; `truncated`, `totalChars`, page with `offset`). |
 | `delegation_status` | Markdown digest for owned threads, across targets (one section per environment). |
 | `show_delegation` | MCP Apps card plus digest. |
@@ -138,9 +138,25 @@ Project choice for `spawn_thread`: `projectId` or `projectTitle` (case-insensiti
 
 ## Runtime mode and remote targets
 
-- A target's `runtime_mode` (default `approval-required`, set with `bind --runtime-mode`) is the default; `spawn_thread` may pass any `runtimeMode`.
+- New `spawn_thread` calls default to `runtimeMode: "full-access"`, regardless of the target's saved `runtime_mode`. Pass `approval-required`, `auto-accept-edits`, or `auto` explicitly to restrict a launch. Existing threads and target config are not changed.
 - With `approval-required`, approvals and questions are answered in the T3 app; the plugin cannot approve.
 - **Remote targets are shared-only:** they run in the chosen project's root with `workspace: "shared"`. A local checkout or a `worktree` request is refused for remote targets. Exception in practice: T3's scratch project (title **No project**, root `~/.t3/scratch`) gives every thread its own dated subfolder under that root; `read_thread` reports it as `scratch folder …`, not a git worktree (the text digest shows only project and target names). Project ids prefixed `mcp:` are projects created by an MCP client; they work like any other.
+
+## Messaging (`send_to_thread`)
+
+| Mode | Idle thread | Running thread |
+|---|---|---|
+| `steer` (default) | Starts a new turn | Steers the current work |
+| `queue` (explicit) | Starts a new turn | Waits until the current turn finishes |
+
+- The old `continue` mode is gone; sending to an idle thread covers it.
+- Steering depends on the provider integration: T3 picks native steering or interrupt-and-restart. If it cannot steer, the send fails with an error; it is never silently queued.
+- Steer is refused while the turn is still preparing or an approval/question is pending. Resolve those in T3 first.
+- On servers advertising `serverResolvedCommandContext`, steer also sends `deliveryIntent: "steer"` so T3 resolves the active run under its dispatch lock.
+- Results carry `messageId`. `accepted` means T3 stored it, not that the provider consumed it. `read_thread` reports `queued`, `queuePosition`, `queueHeld`, and `queuedMessages`; a held queue is resumed in T3.
+- One `requestKey` per message; retry an uncertain send with the identical key, mode, and message.
+
+See [docs/messaging.md](docs/messaging.md) for the pinned upstream contract.
 
 ## Doctor (reachability)
 
@@ -157,7 +173,7 @@ Transport-agnostic: DNS + TCP to each target origin (VPN, LAN, or tunnel all loo
 
 1. `list_targets` → pick a reachable target
 2. `list_providers` and `list_projects` for that environment (`add_project` if the folder is not a project yet)
-3. `spawn_thread` with a stable `requestKey`, the project, a complete brief, and optionally `runtimeMode`
+3. `spawn_thread` with a stable `requestKey`, the project, a complete brief, and optionally `runtimeMode` (default `full-access`)
 4. After success, `show_delegation` once with `phase` `handoff`; paste the Markdown `content` into chat as the trail
 5. `await_thread` / `read_thread` to recover; use the same `requestKey` + args after a cut
 

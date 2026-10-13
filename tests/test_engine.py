@@ -200,11 +200,11 @@ class Operations(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(observed["settled"])
         self.assertTrue(observed["timedOut"])
 
-    async def test_runtime_mode_is_a_default_that_a_call_may_override(self):
+    async def test_full_access_is_default_and_explicit_runtime_overrides_it(self):
         await self.launch()
-        await self.launch(requestKey="raised", runtimeMode="full-access")
+        await self.launch(requestKey="restricted", runtimeMode="approval-required")
         modes = [call[1]["runtimeMode"] for call in FakeClient.calls if call[0] == "orchestration.launchThread"]
-        self.assertEqual(modes, ["approval-required", "full-access"])
+        self.assertEqual(modes, ["full-access", "approval-required"])
 
     async def test_optional_shell_failure_does_not_erase_a_valid_response(self):
         launch = await self.launch()
@@ -216,14 +216,15 @@ class Operations(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(read["status"], "completed")
         self.assertIsNotNone(read["observedAt"])
 
-    async def test_new_round_requires_confirmed_background_state(self):
+    async def test_idle_send_uses_verified_projection_without_optional_shell(self):
         launch = await self.launch()
         async def unavailable(client):
             raise OSError("Synthetic shell outage")
         with patch.object(FakeClient, "shell", unavailable):
-            with self.assertRaises(ValueError):
-                await self.engine.call("send_to_thread", {"threadId": launch["threadId"], "requestKey": "uncertain-background", "message": "Continue"}, OWNER)
-        self.assertFalse(any(call[0] == "orchestration.dispatchCommand" for call in FakeClient.calls))
+            sent = await self.engine.call("send_to_thread", {"threadId": launch["threadId"], "requestKey": "idle-send", "message": "Continue"}, OWNER)
+        self.assertEqual(sent["operationState"], "accepted")
+        dispatch = next(payload for name, payload in FakeClient.calls if name == "orchestration.dispatchCommand")
+        self.assertEqual(dispatch["dispatchMode"], {"type": "start_immediately"})
 
     async def test_status_can_mix_owned_ids_outside_the_list_window(self):
         launches = [await self.launch(requestKey="request-" + str(number)) for number in range(101)]

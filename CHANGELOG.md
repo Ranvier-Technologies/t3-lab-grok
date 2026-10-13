@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.3
+
+Thread messaging: steer and queue.
+
+- **`send_to_thread` `mode`:** `steer` (default) or `queue`. Idle thread: either mode starts a new turn. Running thread: `steer` redirects the current work (`steer_active` on the active run), `queue` waits until the current turn finishes (`queue_after_active`). On servers advertising `serverResolvedCommandContext`, steer also sends `deliveryIntent: "steer"`.
+- **`continue` is removed**, along with the `canContinue` gate: sending to an idle thread covers it.
+- Steering depends on the provider integration; T3 chooses native steering or interrupt-and-restart, and an unsupported steer is an error, never a silent queue. Steer is refused while the turn is preparing or an approval/question is pending; approvals stay in T3.
+- Send results include `messageId`. Reads follow the message's persisted run link, report `queued` with `queuePosition`/`queueHeld`, list `queuedMessages`, and do not report completion while other active or queued work remains. `await_thread` returns on a held queue.
+- **`spawn_thread` defaults to `runtimeMode: "full-access"`**, regardless of the target's saved `runtime_mode`; an explicit `runtimeMode` still overrides it.
+- New `docs/messaging.md`; skill, README and tool docs updated.
+
 ## 0.4.2
 
 Setup doc fixes (`skills/t3-lab-setup`).

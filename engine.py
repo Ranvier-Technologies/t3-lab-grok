@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from client import AuthenticationRequired, Client, Credentials, MutationUnknown, load_targets
-from domain import canonical_moment, row_signature, digest, git_value, observe, resolve_project
+from domain import canonical_moment, row_signature, digest, git_value, message_dispatch_mode, observe, resolve_project
 from journal import Journal
 
 
@@ -44,9 +44,9 @@ class Engine:
         return target
 
     @staticmethod
-    def mode(target, requested):
-        """The target's runtime_mode is a default; a call may pick any valid mode."""
-        mode = requested or target.runtime_mode
+    def mode(requested):
+        """New plugin launches default to full access; explicit overrides are retained."""
+        mode = requested or "full-access"
         if mode not in {"approval-required", "auto-accept-edits", "auto", "full-access"}:
             raise ValueError("Unknown runtime mode. No call was sent.")
         return mode
@@ -97,7 +97,7 @@ class Engine:
         state = operation["state"]
         authentication_required = False
         if state != "accepted":
-            self.mode(target, operation["intent"].get("runtimeMode"))
+            self.mode(operation["intent"].get("runtimeMode"))
             journal.mark(operation["request_key"], "unknown")
             try:
                 method = "orchestration.launchThread" if operation["kind"] == "launch" else "orchestration.dispatchCommand"
@@ -112,6 +112,7 @@ class Engine:
             except (ValueError, OSError, TimeoutError):
                 state = "unknown"
         return {"threadId": operation["thread_id"], "requestKey": operation["request_key"], "commandId": operation["command_id"],
+                "messageId": operation["message_id"],
                 "operationState": state, "target": target.id, "environmentId": target.environment_id,
                 "instruction": "Pair this environment again with setup.py, then reconcile this recorded thread or retry the exact requestKey and arguments. Do not launch a replacement." if authentication_required else
                     "Await this recorded thread." if state == "accepted" else "The outcome is unconfirmed. Read this recorded thread or retry the exact requestKey and arguments; do not launch a replacement."}
@@ -125,13 +126,22 @@ class Engine:
                 "lastError": None, "round": operation["round"], "operationState": operation["state"], "observedAt": None}
         project = {"workspaceRoot": "", "title": "Unconfirmed project"}
         thread = {}
-        background_confirmed = False
+        pending_runs = True
         try:
             projection = await client.projection(thread_id)
             thread = projection["thread"]
             if thread.get("projectId") != launch["intent"]["projectId"]:
                 raise ValueError("The server thread now belongs to a different project. Its result was not used.")
             data.update(observe(operation, projection), observedAt=time.time())
+            pending_runs = any(run.get("status") in {"queued", "preparing", "starting", "running", "waiting"}
+                               for run in projection.get("runs", []))
+            queued = sorted((run for run in projection.get("runs", []) if run.get("status") == "queued"),
+                            key=lambda run: run.get("queuePosition") or run.get("ordinal", 0))
+            data["queuedMessages"] = [{"runId": run["id"], "messageId": run.get("userMessageId"),
+                                       "position": run.get("queuePosition"), "held": run.get("queueHeld", False)} for run in queued]
+            if pending_runs and data["status"] == "completed":
+                data.update(status="background", settled=False, lastAssistantMessage=None,
+                            notice="This message's turn finished, but other active or queued work remains in T3.")
             if data["deliveryConfirmed"] and operation["state"] != "accepted":
                 journal.mark(operation["request_key"], "accepted", {"runId": data["runId"], "confirmedByProjection": True})
                 data["operationState"] = "accepted"
@@ -144,13 +154,12 @@ class Engine:
                 shell = await client.shell()
                 project = next((project for project in shell.get("projects", []) if project["id"] == launch["intent"]["projectId"]), project)
                 summary = next((entry for entry in shell.get("threads", []) if entry["id"] == thread_id), {})
-                background_confirmed = "pendingBackgroundTasks" in summary
                 if summary.get("pendingBackgroundTasks") and data["status"] == "completed":
                     data.update(status="background", settled=False, lastAssistantMessage=None)
                 if data["status"] == "failed" and summary.get("lastError"):
                     data["lastError"] = summary["lastError"]
             except (ValueError, OSError, TimeoutError):
-                data["notice"] = "Reply observed; background work could not be confirmed. A new round stays blocked."
+                data["notice"] = "Reply observed; background work could not be confirmed."
         selection = thread.get("modelSelection", launch["intent"]["modelSelection"])
         key = (target.environment_id, selection["instanceId"])
         if data["observedAt"] is not None and key not in self.drivers:
@@ -166,7 +175,6 @@ class Engine:
         data.update(title=launch["intent"]["title"], provider=selection["instanceId"], driver=self.drivers.get(key), model=selection["model"],
                     project=Path(project["workspaceRoot"]).name or project["title"], place=place_label(checkout, project["workspaceRoot"], principal),
                     environment=target.environment_id, webOrigin=target.web_origin, target=target.id, checkout=checkout,
-                    canContinue=background_confirmed and data["status"] in {"completed", "failed", "stopped"},
                     runtimeMode=thread.get("runtimeMode", launch["intent"]["runtimeMode"]))
         return self.credentials.redact(data)
 
@@ -272,7 +280,7 @@ class Engine:
             provider = next((provider for provider in await client.providers() if provider["instanceId"] == model["instanceId"]), None)
             if not provider or not provider["ready"] or model["model"] not in provider["models"]:
                 raise ValueError("The requested provider/model is not available. No substitute or thread was launched.")
-            mode = self.mode(target, arguments.get("runtimeMode"))
+            mode = self.mode(arguments.get("runtimeMode"))
             intent = {"projectId": project["id"], "title": arguments.get("title") or "Task from the parent chat", "modelSelection": model,
                       "runtimeMode": mode, "interactionMode": "default", "workspaceStrategy": strategy, "creationSource": "mcp",
                       "initialMessage": {"text": arguments["prompt"], "attachments": []}}
@@ -281,10 +289,16 @@ class Engine:
             return await self.spawned(journal, operation, await self.submit(journal, operation), owner)
         if name == "send_to_thread":
             operation = journal.latest(arguments["threadId"])
-            current = await self.read(journal, arguments["threadId"])
-            if not current["canContinue"]:
-                raise ValueError("This thread is not ready for a confirmed new round. Resolve questions/approvals in T3 or await it; no message was sent.")
-            intent = {"text": arguments["message"], "attachments": [], "createdBy": "user", "creationSource": "mcp", "dispatchMode": {"type": "start_immediately"}}
+            target = self.target(operation["target"], operation["environment"])
+            client = Client(target, self.credentials)
+            projection = await client.projection(arguments["threadId"])
+            if projection["thread"].get("projectId") != journal.launch(arguments["threadId"])["intent"]["projectId"]:
+                raise ValueError("The thread now belongs to a different project. No message was sent.")
+            dispatch = message_dispatch_mode(arguments.get("mode", "steer"), projection)
+            intent = {"text": arguments["message"], "attachments": [], "createdBy": "user", "creationSource": "mcp", "dispatchMode": dispatch}
+            metadata = getattr(client, "metadata", None) or {}
+            if arguments.get("mode", "steer") == "steer" and metadata.get("capabilities", {}).get("serverResolvedCommandContext") is True:
+                intent["deliveryIntent"] = "steer"
             followup = journal.prepare(arguments["requestKey"], "send", operation["target"], operation["environment"], intent, arguments["threadId"], request=arguments)
             return await self.submit(journal, followup)
         if name in {"read_thread", "await_thread"}:
@@ -297,7 +311,7 @@ class Engine:
                 except TimeoutError:
                     return {"threadId": arguments["threadId"], "status": "unknown", "settled": False, "lastAssistantMessage": None,
                             "lastError": None, "timedOut": True, "instruction": "The wait budget ended, not the child. Await the same ID again."}
-                if data["settled"] or time.monotonic() >= deadline:
+                if data["settled"] or data.get("queueHeld") or time.monotonic() >= deadline:
                     # Keep the head; callers page with offset. truncated/totalChars describe the main reply.
                     size, offset = arguments.get("maxChars", 4000), arguments.get("offset", 0)
                     main = "lastAssistantMessage" if data.get("lastAssistantMessage") else "latestAssistantText"
@@ -346,7 +360,7 @@ class Engine:
                 content["wait"] = waited
             if moment == "update":
                 identity = (owner, tuple(sorted(selected)))
-                signature = json.dumps([(row["threadId"], row["status"], row["lastError"], row["round"]) for row in rows])
+                signature = json.dumps([(row["threadId"], row_signature(row)) for row in rows])
                 content["changed"] = self.avisos.get(identity) != signature
                 if content["changed"]:
                     self.avisos[identity] = signature

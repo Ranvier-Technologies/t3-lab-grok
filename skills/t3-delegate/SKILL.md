@@ -30,7 +30,7 @@ Run `scripts/doctor-targets.py` before the first spawn in a session (or when lis
 ## Launch
 
 1. Call `list_targets`, then `list_providers` for the chosen environment. Never silently substitute provider, model, or destination.
-2. Pick the project: `list_projects` shows every project on the target; pass `projectId` or `projectTitle`. If the folder is not a project yet, `add_project` with its absolute path on that machine. Naming no project runs in T3's scratch **No project**; the result's `warning` says so, so name the project whenever the task belongs to one. `runtimeMode` defaults to the target's `runtime_mode`; pass one only when the task needs it.
+2. Pick the project: `list_projects` shows every project on the target; pass `projectId` or `projectTitle`. If the folder is not a project yet, `add_project` with its absolute path on that machine. Naming no project runs in T3's scratch **No project**; the result's `warning` says so, so name the project whenever the task belongs to one. New launches default to `runtimeMode: "full-access"`, not the saved target mode. Pass a restricted mode explicitly when needed. Do not change existing thread permissions to match this launch default.
 3. Local launches in a Git project: pass this chat's actual absolute checkout. Remote launches: pass `target`, omit checkout; they run shared at the project root. Protocol 1 is unsupported.
 4. Write a complete brief (paths, goal, permissions, checks, return format). The child cannot see this conversation.
 5. Stable `requestKey` per logical task. `shared` sees uncommitted work in place; `worktree` starts from last commit.
@@ -54,7 +54,16 @@ Pairing uses `setup.py` outside the chat. Never put codes/tokens in tool argumen
 
 ## Continue and close
 
-Follow-up on a settled thread: `send_to_thread` with the same `threadId`, a new stable `requestKey`, and a complete brief. After confirmation: "same thread, no new one created". Await the new round. Unconfirmed send must not reuse the old answer.
+Follow-up on a settled thread: `send_to_thread` with the same `threadId`, a new stable `requestKey`, and a complete brief. The default starts a new turn when idle. After confirmation: "same thread, no new one created". Await the new round. Unconfirmed send must not reuse the old answer.
+
+For a user-requested message while work is running, use `send_to_thread` with an explicit `mode`:
+
+- `steer` is the default. It changes a running turn's instructions or starts a new turn when idle. T3 may interrupt and restart the provider if native steering is unavailable. Preparation or pending approvals/questions must be resolved first; do not silently switch modes.
+- `queue` explicitly schedules a later turn behind active work, or starts immediately when idle. Queue acceptance is not completion. Read `queuePosition`, `queueHeld`, and `queuedMessages`; a held queue needs the user to resume it in T3.
+
+The old `continue` mode is removed. Use only `steer` or `queue` and never silently substitute one for the other.
+
+Retain the returned `messageId`. Acceptance is not completion or proof that the provider consumed a steering message. Observe the same thread after sending. Use a new `requestKey` for each message; retry uncertain sends with the identical key, mode, and message. The saved steering target and message IDs survive retries. Never resend as a new message to recover an unknown result.
 
 When all settle: synthesize from artifacts first, quote each child result once. Call `show_delegation` with `phase` `wrap-up` only if no card rendered; otherwise the iframe moves to wrap-up on its own. Whenever you called `show_delegation`, paste its `content` digest as the chat trail (text-only hosts included). `delegation_status` with `moment=update` still means write nothing when `changed=false`.
 

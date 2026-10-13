@@ -91,8 +91,6 @@ One pairing per machine covers all of its projects: bots pick one per `spawn_thr
 ```sh
 # optional: a default project for spawns that name none
 uv run --frozen python setup.py bind --target <TARGET_ID> --project-id <ID>
-# optional: a default runtime mode (approval-required, auto-accept-edits, auto, or full-access)
-uv run --frozen python setup.py bind --target <TARGET_ID> --runtime-mode auto-accept-edits
 python3 scripts/doctor-targets.py --require-remote <TARGET_ID>   # honors T3_LAB_V2_CONFIG_DIR (or pass --config)
 uv run --frozen python setup.py status --probe
 ```
@@ -143,6 +141,7 @@ PY
     "modelSelection": {"instanceId": "<instanceId from list_providers>", "model": "<model>"},
     "prompt": "Reply with the word ready. Do not edit files."}
    ```
+   New spawns default to `runtimeMode: "full-access"` (a saved `bind --runtime-mode` no longer changes that); this check passes `approval-required` explicitly.
    Returns `threadId` and `operationState: "accepted"`. Use a fresh `requestKey` for every new check (re-running this check with an old key returns the earlier thread, or is refused if the arguments changed); reuse a key only to recover that same launch.
 5. Follow it with `await_thread` → `{"threadId": "<id>"}`, or with the card: `delegation_status` → `{"threadIds": ["<id>"], "moment": "handoff", "waitSeconds": 25}`, then repeat with `"moment": "check-in"` and `"since": "<signature from the last result>"`.
 6. Confirm with `read_thread` → `{"threadId": "<id>"}`.
