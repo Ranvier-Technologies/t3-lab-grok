@@ -1,6 +1,6 @@
 {
   "name": "t3-lab-grok",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Delegate from a parent chat (Cursor Agent, Grok Bot, Codex) to official T3 Nightly environments with durable operations, verified checkouts and text-first status.",
   "author": {
     "name": "Bastian"

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.2
+
+Setup doc fixes (`skills/t3-lab-setup`).
+
+- `T3 transport could not read public metadata` after a host update/restart: the origin is unreachable, usually Tailscale down or off the tailnet; redo step 2.
+- `unset TS_AUTHKEY` clears only the current shell; a saved reusable key is reused on reconnect.
+- Scratch root varies by install; `list_projects` shows the real path.
+- Stale tools after an update: restart the host's MCP servers, else the host, then redo step 2.
+- Nits: idempotent clone/pull, remote spawns omit `checkout`, `list_targets` takes no arguments.
+
 ## 0.4.1
 
 Demo feedback.

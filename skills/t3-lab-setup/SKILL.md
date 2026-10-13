@@ -23,11 +23,11 @@ Every step has a check. Do not move on until the check passes. If a step is alre
 
 ```sh
 uv --version            # install: curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone https://github.com/Ranvier-Technologies/t3-lab-grok.git <ABS_PLUGIN_DIR>
+if [ -d <ABS_PLUGIN_DIR>/.git ]; then git -C <ABS_PLUGIN_DIR> pull --ff-only; else git clone https://github.com/Ranvier-Technologies/t3-lab-grok.git <ABS_PLUGIN_DIR>; fi
 cd <ABS_PLUGIN_DIR> && uv run --frozen python -c "import mcp, httpx; print('ok')"
 ```
 
-Pick an absolute `<ABS_PLUGIN_DIR>` (Grok Bot box: `/workspace/plugins/t3-lab-grok`; Cursor: `~/.cursor/plugins/local/t3-lab-grok`, a real directory, not a symlink). If it already exists, `git pull --ff-only` instead of cloning.
+Pick an absolute `<ABS_PLUGIN_DIR>` (Grok Bot box: `/workspace/plugins/t3-lab-grok`; Cursor: `~/.cursor/plugins/local/t3-lab-grok`, a real directory, not a symlink).
 
 **Check:** the last command prints `ok`.
 
@@ -46,6 +46,7 @@ T3 Nightly must be reachable from **this host** at an HTTPS origin (or `http://1
      sudo tailscale up --auth-key="file:$key" --advertise-tags=<tag> --hostname=<name>
      sudo rm -f "$key"; unset TS_AUTHKEY
      ```
+     `unset` clears only the current shell. If the key is reusable and saved as a host env var, a later reconnect reuses it.
   4. If MagicDNS does not resolve the Nightly hostname here, add its tailnet IP from `tailscale status` to `/etc/hosts` (`<ip> <host>.<tailnet>.ts.net`).
 
 **Check:**
@@ -55,6 +56,8 @@ curl -fsS <ORIGIN>/.well-known/t3/environment
 ```
 
 returns JSON with `"orchestrationProtocolVersion": 2`. Protocol 1 or an error means stop: upgrade Nightly or fix the network first.
+
+After a host update or restart, `tailscaled` may not be running. The error `T3 transport could not read public metadata` means this host cannot reach `<ORIGIN>`; on a tailnet origin, usually `tailscaled` is down or this host is off the tailnet: redo step 2 (otherwise check the origin and network).
 
 ## 3. Owner, pairing, and binding
 
@@ -83,7 +86,7 @@ Use `--kind local` only for a loopback origin on this same host. Add `--web-orig
 uv run --frozen python setup.py projects --target <TARGET_ID>
 ```
 
-One pairing per machine covers all of its projects: bots pick one per `spawn_thread` (`projectId` or `projectTitle`), see them with `list_projects`, and can register an existing folder with `add_project`. **No project** is T3's scratch project (root `~/.t3/scratch`): handy for checks; each thread there gets its own dated subfolder, and it is where a spawn that names no project runs (unless `bind --project-id` set a default). Ids prefixed `mcp:` are projects created by an MCP client and work normally.
+One pairing per machine covers all of its projects: bots pick one per `spawn_thread` (`projectId` or `projectTitle`), see them with `list_projects`, and can register an existing folder with `add_project`. **No project** is T3's scratch project (root e.g. `~/.t3/scratch` or `~/.t3-nightly-omarchy/scratch`, depending on the install; `list_projects` shows the real path): handy for checks; each thread there gets its own dated subfolder, and it is where a spawn that names no project runs (unless `bind --project-id` set a default). Ids prefixed `mcp:` are projects created by an MCP client and work normally.
 
 ```sh
 # optional: a default project for spawns that name none
@@ -108,6 +111,8 @@ Grok Bot: use the host's add-MCP-server flow with exactly that command; use the 
 
 **Check:** the server lists its tools (`list_targets`, `spawn_thread`, …).
 
+If the connector still lists old tools after an update, restart the host's MCP servers; if that fails, restart the host (Grok Bot: Update Computer), then redo step 2.
+
 To verify without registering anything (or before the host reloads), drive it over stdio with the MCP Python SDK from the plugin venv:
 
 ```sh
@@ -129,10 +134,10 @@ PY
 
 `target` is always the target **id** from `list_targets` (e.g. `mac`), never the environment UUID. Inputs are strict: unknown fields are rejected, and the error names the missing or unexpected field.
 
-1. `list_targets` → `{}`. Shows the target with `connection: configured`.
+1. `list_targets`: call with no arguments (`{}`). Shows the target with `connection: configured`.
 2. `list_providers` → `{"target": "<TARGET_ID>"}`. At least one provider with `"ready": true` and a model.
 3. `list_projects` → `{"target": "<TARGET_ID>"}`. Pick a project (scratch **No project** is fine for a check).
-4. `spawn_thread` (remote: omit `checkout`; `workspace` must be `shared`):
+4. `spawn_thread` (for remote targets, omit `checkout`; `workspace` must be `shared`):
    ```json
    {"target": "<TARGET_ID>", "projectId": "<id from list_projects>", "requestKey": "setup-check-<UTC timestamp>", "workspace": "shared", "runtimeMode": "approval-required",
     "modelSelection": {"instanceId": "<instanceId from list_providers>", "model": "<model>"},
