@@ -3,7 +3,7 @@ name = "t3-lab-grok"
 version = "0.4.4"
 requires-python = ">=3.12"
 dependencies = [
-    "certifi==2026.7.22",
+    "certifi==2026.10.19",
     "httpx==0.28.1",
     "jsonschema==4.26.0",
     "mcp==1.26.0",
